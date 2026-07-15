@@ -1,7 +1,8 @@
 -- African Nomad Job Sheet Automation System — Phase 1 schema.
--- Project: mgqfoorchhbtlhvqscbl (shared with the sourcing engine and other AN apps).
--- Paste into the Supabase SQL editor for that project, or apply via the Supabase MCP
--- apply_migration tool. Reviewed before applying per Christiaan's request.
+-- Project: wnsjzxotknadqvznnijw — a dedicated project for this system (not the
+-- shared mgqfoorchhbtlhvqscbl project originally referenced in the context
+-- doc; Christiaan provided this project instead, and it started empty).
+-- Applied via the Supabase MCP apply_migration tool.
 
 create extension if not exists pgcrypto;
 
