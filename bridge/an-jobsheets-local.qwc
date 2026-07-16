@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<QBWCXML>
+  <AppName>African Nomad Job Sheets</AppName>
+  <AppID></AppID>
+  <AppURL>http://localhost:8080/qbwc</AppURL>
+  <AppDescription>Syncs approved job sheets into QuickBooks Desktop as Estimates.</AppDescription>
+  <AppSupport>http://localhost:8080/health</AppSupport>
+  <UserName>an-jobsheets</UserName>
+  <OwnerID>{b7673ee6-f01a-429a-8fa6-78bf4e77f300}</OwnerID>
+  <FileID>{68685dc5-1464-4cb4-bb48-e98c65530dbc}</FileID>
+  <QBType>QBFS</QBType>
+  <Scheduler>
+    <RunEveryNMinutes>5</RunEveryNMinutes>
+  </Scheduler>
+  <IsReadOnly>false</IsReadOnly>
+</QBWCXML>
