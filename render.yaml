@@ -1,0 +1,39 @@
+# Render Blueprint for the QBD Bridge. Lives at repo root so Render's Blueprint
+# feature auto-detects it. This is a sibling web service to the existing n8n
+# instance — deliberately its own service (not bolted onto n8n) so a bridge
+# restart never disturbs automation workflows, and vice versa.
+#
+# rootDir points Render at the bridge/ subfolder, so the whole monorepo shares
+# one GitHub remote while Render only builds/runs the bridge.
+#
+# Only two env vars are left blank (sync:false) for you to fill in the Render
+# dashboard: the Supabase service-role key and the QBWC password. Everything
+# else is pre-filled below.
+services:
+  - type: web
+    name: an-qbd-bridge
+    runtime: node
+    plan: starter
+    rootDir: bridge
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        value: https://wnsjzxotknadqvznnijw.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: QBWC_USERNAME
+        value: an-jobsheets
+      - key: QBWC_PASSWORD
+        sync: false
+      - key: QBD_ITEM_NAME
+        value: Job Sheet Line
+      - key: QBD_VAT_MODE
+        value: line
+      - key: QBD_VAT_ITEM_NAME
+        value: VAT @ 15%
+      - key: QBD_INCOME_ACCOUNT
+        value: Sales
+      - key: QBD_EXPENSE_ACCOUNT
+        value: Job Expenses
