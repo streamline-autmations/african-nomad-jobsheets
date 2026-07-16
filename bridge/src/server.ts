@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { loadConfig, configProblems } from "./config";
 import { SessionManager } from "./session";
 import { SupabaseQueueStore } from "./supabaseStore";
