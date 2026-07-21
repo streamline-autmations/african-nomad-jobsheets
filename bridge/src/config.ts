@@ -13,8 +13,10 @@ export interface BridgeConfig {
   discountItemName: string;
   /** Income account for auto-created service items. Must exist in the company file. */
   incomeAccount: string;
-  /** Expense account used for BillAdd lines (supplier bills, later phase). */
+  /** Expense account used for BillAdd lines (supplier bills). */
   expenseAccount: string;
+  /** Vendor name used for a Bill when an expense line was left without one. */
+  defaultVendorName: string;
   /**
    * qbXML spec version sent in every request. 13.0 is supported by every
    * QuickBooks Desktop Pro/Premier/Enterprise release since 2013, including
@@ -47,6 +49,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     discountItemName: env.QBD_DISCOUNT_ITEM_NAME ?? "Sibanye Discount",
     incomeAccount: env.QBD_INCOME_ACCOUNT ?? "Sales",
     expenseAccount: env.QBD_EXPENSE_ACCOUNT ?? "Job Expenses",
+    defaultVendorName: env.QBD_DEFAULT_VENDOR_NAME ?? "General Supplier",
     qbxmlVersion: "13.0",
     decimalSeparator: env.QBD_DECIMAL_SEPARATOR ?? ".",
   };

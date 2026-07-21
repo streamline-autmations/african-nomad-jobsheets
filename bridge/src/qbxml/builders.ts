@@ -43,12 +43,19 @@ export function buildCustomerAdd(
   );
 }
 
-/** Look a customer up by exact name — used when CustomerAdd reports a duplicate (3100). */
-export function buildCustomerQuery(version: string, requestId: string, name: string): string {
+/**
+ * Look a customer (or "Customer:Job") up by exact FullName — used when
+ * CustomerAdd reports a duplicate (3100), and for the ensure-exists check
+ * before an estimate/invoice/bill references one. `fullName` must already be
+ * sanitised (via qbdName() or qbdJobFullName()) by the caller — it is NOT
+ * re-sanitised here, because doing so would strip the intentional
+ * Customer:Job colon separator.
+ */
+export function buildCustomerQuery(version: string, requestId: string, fullName: string): string {
   return wrapQbxml(
     version,
     `<CustomerQueryRq requestID="${escapeXml(requestId)}">` +
-      `<FullName>${escapeXml(qbdName(name))}</FullName>` +
+      `<FullName>${escapeXml(fullName)}</FullName>` +
       `</CustomerQueryRq>`,
   );
 }
@@ -93,6 +100,7 @@ export interface EstimateLineInput {
 }
 
 export interface EstimateAddInput {
+  /** Already-sanitised FullName — a flat customer name or "Customer:Job". */
   customerName: string;
   memo?: string;
   lines: EstimateLineInput[];
@@ -147,7 +155,7 @@ export function buildEstimateAdd(
     version,
     `<EstimateAddRq requestID="${escapeXml(requestId)}">` +
       `<EstimateAdd>` +
-      `<CustomerRef><FullName>${escapeXml(qbdName(input.customerName))}</FullName></CustomerRef>` +
+      `<CustomerRef><FullName>${escapeXml(input.customerName)}</FullName></CustomerRef>` +
       memo +
       salesLinesXml("EstimateLineAdd", input) +
       `</EstimateAdd>` +
@@ -179,12 +187,30 @@ export function buildInvoiceAdd(
     version,
     `<InvoiceAddRq requestID="${escapeXml(requestId)}">` +
       `<InvoiceAdd>` +
-      `<CustomerRef><FullName>${escapeXml(qbdName(input.customerName))}</FullName></CustomerRef>` +
+      `<CustomerRef><FullName>${escapeXml(input.customerName)}</FullName></CustomerRef>` +
       memo +
       link +
       salesLinesXml("InvoiceLineAdd", input) +
       `</InvoiceAdd>` +
       `</InvoiceAddRq>`,
+  );
+}
+
+export function buildVendorQuery(version: string, requestId: string, name: string): string {
+  return wrapQbxml(
+    version,
+    `<VendorQueryRq requestID="${escapeXml(requestId)}">` +
+      `<FullName>${escapeXml(qbdName(name))}</FullName>` +
+      `</VendorQueryRq>`,
+  );
+}
+
+export function buildVendorAdd(version: string, requestId: string, name: string): string {
+  return wrapQbxml(
+    version,
+    `<VendorAddRq requestID="${escapeXml(requestId)}">` +
+      `<VendorAdd><Name>${escapeXml(qbdName(name))}</Name></VendorAdd>` +
+      `</VendorAddRq>`,
   );
 }
 

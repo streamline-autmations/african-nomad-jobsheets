@@ -35,11 +35,14 @@ export interface QueueRow {
     vat_amount?: number;
     client_total?: number;
     estimate_txn_id?: string;
-    // create_bill (later phase)
+    // create_bill
     supplier_name?: string;
     amount?: number;
     supplier_bill_id?: string;
     memo?: string;
+    /** Customer + job description this expense should be job-costed against, when set. */
+    job_customer_name?: string;
+    job_name?: string;
   };
   status: QueueStatus;
   qbd_txn_id: string | null;

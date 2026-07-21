@@ -25,18 +25,49 @@ function customerRow(jobSheetId: string, name: string, createdAt: string): Queue
   };
 }
 
-function estimateRow(jobSheetId: string, name: string, createdAt: string): QueueRow {
+// jobDescription defaults to "" so tests about customer-ensure/duplicate
+// mechanics aren't also implicitly exercising the Customer:Job path — that
+// gets its own dedicated tests below.
+function estimateRow(
+  jobSheetId: string,
+  name: string,
+  createdAt: string,
+  jobDescription = "",
+): QueueRow {
   return {
     id: `e-${jobSheetId}`,
     job_sheet_id: jobSheetId,
     action: "create_estimate",
     payload: {
       customer_name_raw: name,
-      job_description: "Catering — site visit",
+      job_description: jobDescription,
       client_lines: [{ id: "l1", description: "Catering", qty: 1, unitCost: 10000, lineTotal: 10000 }],
       client_subtotal: 10000,
       vat_amount: 1500,
       client_total: 11500,
+    },
+    status: "pending",
+    qbd_txn_id: null,
+    error_message: null,
+    created_at: createdAt,
+    synced_at: null,
+  };
+}
+
+function billRow(
+  jobSheetId: string,
+  createdAt: string,
+  overrides: Partial<QueueRow["payload"]> = {},
+): QueueRow {
+  return {
+    id: `b-${jobSheetId}-${createdAt}`,
+    job_sheet_id: jobSheetId,
+    action: "create_bill",
+    payload: {
+      supplier_name: "Local Caterer",
+      amount: 4000,
+      memo: "Food cost",
+      ...overrides,
     },
     status: "pending",
     qbd_txn_id: null,
@@ -185,6 +216,95 @@ describe("full session — existing customer, no create_customer row", () => {
     const kinds = result.requests.map((r) => /<(\w+Rq) requestID=/.exec(r)?.[1]);
     expect(kinds).toEqual(["CustomerQueryRq", "ItemQueryRq", "ItemQueryRq", "EstimateAddRq"]);
     expect(store.jobSheets.get("js3b")!.status).toBe("synced");
+  });
+});
+
+describe("full session — job costing (Customer:Job + expense Bills)", () => {
+  it("creates the Job under the customer and books the Estimate against Customer:Job", async () => {
+    const store = new FakeQueueStore([
+      estimateRow("js5", "Harmony", "2026-07-20T00:00:00Z", "Solar Torch Delivery"),
+    ]);
+    const manager = new SessionManager(store, config);
+    const responder = makeQbdResponder({
+      existingItems: new Set(["VAT @ 15%", "Job Sheet Line"]),
+      existingCustomers: new Set(["Harmony"]), // parent already synced, job is new
+    });
+
+    const result = await runQbwcSession(manager, "an-jobsheets", "secret", responder);
+    const kinds = result.requests.map((r) => /<(\w+Rq) requestID=/.exec(r)?.[1]);
+    expect(kinds).toEqual([
+      "CustomerQueryRq", // parent "Harmony" — found
+      "CustomerQueryRq", // "Harmony:Solar Torch Delivery" — not found
+      "CustomerAddRq", // job created under ParentRef
+      "ItemQueryRq",
+      "ItemQueryRq",
+      "EstimateAddRq",
+    ]);
+
+    const jobAdd = result.requests.find((r) => r.includes("<CustomerAddRq"))!;
+    expect(jobAdd).toContain("<Name>Solar Torch Delivery</Name>");
+    expect(jobAdd).toContain("<ParentRef><FullName>Harmony</FullName></ParentRef>");
+
+    const estimateAdd = result.requests.find((r) => r.includes("<EstimateAddRq"))!;
+    expect(estimateAdd).toContain(
+      "<CustomerRef><FullName>Harmony:Solar Torch Delivery</FullName></CustomerRef>",
+    );
+    expect(store.jobSheets.get("js5")!.status).toBe("synced");
+  });
+
+  it("books an expense line as a Bill tagged to the same job, ensuring the vendor exists first", async () => {
+    const store = new FakeQueueStore([
+      estimateRow("js6", "Harmony", "2026-07-20T00:00:00Z", "Solar Torch Delivery"),
+      billRow("js6", "2026-07-20T00:00:00Z", {
+        supplier_name: "Torch Supplies CC",
+        amount: 4000,
+        job_customer_name: "Harmony",
+        job_name: "Solar Torch Delivery",
+      }),
+    ]);
+    const manager = new SessionManager(store, config);
+    const responder = makeQbdResponder({
+      existingItems: new Set(["VAT @ 15%", "Job Sheet Line"]),
+      existingCustomers: new Set(["Harmony"]),
+      existingVendors: new Set(), // vendor not found -> must be auto-created
+    });
+
+    const result = await runQbwcSession(manager, "an-jobsheets", "secret", responder);
+    const kinds = result.requests.map((r) => /<(\w+Rq) requestID=/.exec(r)?.[1]);
+    expect(kinds).toEqual([
+      "CustomerQueryRq", // parent "Harmony" — found
+      "CustomerQueryRq", // job — not found
+      "CustomerAddRq", // job created
+      "VendorQueryRq", // "Torch Supplies CC" — not found
+      "VendorAddRq", // vendor created
+      "ItemQueryRq",
+      "ItemQueryRq",
+      "EstimateAddRq",
+      "BillAddRq",
+    ]);
+
+    const billAdd = result.requests.find((r) => r.includes("<BillAddRq"))!;
+    expect(billAdd).toContain("<VendorRef><FullName>Torch Supplies CC</FullName></VendorRef>");
+    expect(billAdd).toContain(
+      "<CustomerRef><FullName>Harmony:Solar Torch Delivery</FullName></CustomerRef>",
+    );
+    expect(billAdd).toContain("<Amount>4000.00</Amount>");
+
+    const bill = store.rows.find((r) => r.action === "create_bill")!;
+    expect(bill.status).toBe("confirmed");
+  });
+
+  it("falls back to the configured default vendor when an expense line has no vendor typed", async () => {
+    const store = new FakeQueueStore([
+      billRow("js7", "2026-07-20T00:00:00Z", { supplier_name: undefined }),
+    ]);
+    const manager = new SessionManager(store, config);
+    const responder = makeQbdResponder({ existingVendors: new Set(["General Supplier"]) });
+
+    const result = await runQbwcSession(manager, "an-jobsheets", "secret", responder);
+    const billAdd = result.requests.find((r) => r.includes("<BillAddRq"))!;
+    expect(billAdd).toContain("<VendorRef><FullName>General Supplier</FullName></VendorRef>");
+    expect(store.rows.find((r) => r.action === "create_bill")!.status).toBe("confirmed");
   });
 });
 

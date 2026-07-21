@@ -100,6 +100,28 @@ export function NsaQuoteList() {
     }
   }
 
+  async function handlePushToQbo(quote: NsaQuote) {
+    setActionError(null);
+    setActionMessage(null);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/qbo/push-nsa-quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoteId: quote.id }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Push to QuickBooks failed.");
+      setActionMessage(
+        `Sent to QuickBooks Online as ${quote.status === "invoiced" ? "Invoice" : "Estimate"} ${body.qboDocNumber} — check your connected QBO company.`,
+      );
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (loading) return <p>Loading NSA quotes…</p>;
   if (loadError) return <div className="banner banner-error">{loadError}</div>;
   if (quotes.length === 0) return <p>No NSA quotes yet — create one first.</p>;
@@ -217,6 +239,17 @@ export function NsaQuoteList() {
                 onClick={() => handleCreateJobSheet(selected)}
               >
                 Create AN Job Sheet
+              </button>
+            )}
+
+            {selected.status !== "draft" && (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={busy}
+                onClick={() => handlePushToQbo(selected)}
+              >
+                Push to QuickBooks Online
               </button>
             )}
           </div>

@@ -6,7 +6,7 @@ import {
   buildItemServiceAdd,
   buildBillAdd,
 } from "./builders";
-import { qbdAmount, qbdName, qbdQuantity, setQbdDecimalSeparator } from "./xml";
+import { qbdAmount, qbdJobFullName, qbdName, qbdQuantity, setQbdDecimalSeparator } from "./xml";
 
 const V = "13.0";
 
@@ -14,6 +14,18 @@ describe("qbdName", () => {
   it("caps names at 41 chars and replaces the QBD list separator", () => {
     expect(qbdName("A".repeat(50)).length).toBe(41);
     expect(qbdName("Parent:Child")).toBe("Parent-Child");
+  });
+});
+
+describe("qbdJobFullName", () => {
+  it("joins customer and job with a colon, sanitising each segment separately", () => {
+    expect(qbdJobFullName("Harmony", "Solar Torch Delivery")).toBe("Harmony:Solar Torch Delivery");
+  });
+
+  it("doesn't let a colon inside either segment corrupt the hierarchy", () => {
+    // If the whole joined string were re-sanitised, this colon would also
+    // get stripped — qbdJobFullName must sanitise each side before joining.
+    expect(qbdJobFullName("Harmony", "Weird:Job")).toBe("Harmony:Weird-Job");
   });
 });
 
@@ -44,6 +56,17 @@ describe("buildCustomerAdd", () => {
     const xml = buildCustomerAdd(V, "0", "Tom & Jerry <Pty>");
     expect(xml).toContain("Tom &amp; Jerry &lt;Pty&gt;");
     expect(xml).not.toContain("Tom & Jerry");
+  });
+
+  it("adds a ParentRef when creating a Job under a customer", () => {
+    const xml = buildCustomerAdd(V, "0", "Solar Torch Delivery", "Harmony");
+    expect(xml).toContain("<Name>Solar Torch Delivery</Name>");
+    expect(xml).toContain("<ParentRef><FullName>Harmony</FullName></ParentRef>");
+  });
+
+  it("omits ParentRef for a plain top-level customer", () => {
+    const xml = buildCustomerAdd(V, "0", "Harmony");
+    expect(xml).not.toContain("ParentRef");
   });
 });
 
@@ -147,5 +170,26 @@ describe("buildBillAdd", () => {
     expect(xml).toContain("<AccountRef><FullName>Job Expenses</FullName></AccountRef>");
     expect(xml).toContain("<Amount>1234.50</Amount>");
     expect(xml).toContain("<Memo>Soup order</Memo>");
+  });
+
+  it("adds a CustomerRef on the expense line when job-costed against a Customer:Job", () => {
+    const xml = buildBillAdd(V, "4", {
+      vendorName: "Local Caterer",
+      amount: 1234.5,
+      expenseAccount: "Job Expenses",
+      customerJobRef: "Harmony:Solar Torch Delivery",
+    });
+    expect(xml).toContain("<CustomerRef><FullName>Harmony:Solar Torch Delivery</FullName></CustomerRef>");
+    // Must sit inside ExpenseLineAdd, not BillAdd itself — QBD tracks job-costing per line.
+    expect(xml.indexOf("<ExpenseLineAdd>")).toBeLessThan(xml.indexOf("<CustomerRef>"));
+  });
+
+  it("omits CustomerRef when not job-costed", () => {
+    const xml = buildBillAdd(V, "4", {
+      vendorName: "Local Caterer",
+      amount: 1234.5,
+      expenseAccount: "Job Expenses",
+    });
+    expect(xml).not.toContain("CustomerRef");
   });
 });

@@ -101,10 +101,13 @@ export function makeQbdResponder(options: {
    * existing tests that never cared about query realism are unaffected.
    */
   existingCustomers?: Set<string>;
+  /** Gates VendorQueryRq the same way existingCustomers gates CustomerQueryRq. */
+  existingVendors?: Set<string>;
 } = {}) {
   const existingItems = options.existingItems ?? new Set<string>();
   const duplicateCustomers = options.duplicateCustomers ?? new Set<string>();
   const existingCustomers = options.existingCustomers;
+  const existingVendors = options.existingVendors;
   let listSeq = 80000000;
   let txnSeq = 90000000;
 
@@ -172,6 +175,30 @@ export function makeQbdResponder(options: {
         `<CustomerQueryRs requestID="${id}" statusCode="0" statusSeverity="Info" statusMessage="OK">` +
           `<CustomerRet><ListID>${++listSeq}-1</ListID><Name>${name}</Name></CustomerRet>` +
           `</CustomerQueryRs>`,
+      );
+    }
+
+    if (request.includes("<VendorQueryRq")) {
+      const name = fullName(request);
+      if (existingVendors && !existingVendors.has(name)) {
+        return wrap(
+          `<VendorQueryRs requestID="${id}" statusCode="500" statusSeverity="Info" statusMessage="Not found."></VendorQueryRs>`,
+        );
+      }
+      return wrap(
+        `<VendorQueryRs requestID="${id}" statusCode="0" statusSeverity="Info" statusMessage="OK">` +
+          `<VendorRet><ListID>${++listSeq}-1</ListID><Name>${name}</Name></VendorRet>` +
+          `</VendorQueryRs>`,
+      );
+    }
+
+    if (request.includes("<VendorAddRq")) {
+      const name = fullName(request);
+      existingVendors?.add(name);
+      return wrap(
+        `<VendorAddRs requestID="${id}" statusCode="0" statusSeverity="Info" statusMessage="OK">` +
+          `<VendorRet><ListID>${++listSeq}-1</ListID><Name>${name}</Name></VendorRet>` +
+          `</VendorAddRs>`,
       );
     }
 

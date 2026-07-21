@@ -1,0 +1,193 @@
+import { INTUIT_TOKEN_URL, intuitBasicAuthHeader, supabaseAdmin } from "./qbo";
+
+// Sandbox vs production only changes which QBO API host we call — same
+// OAuth flow, same code path either way. Defaults to sandbox since that's
+// what we're testing against; flip via QBO_API_ENVIRONMENT=production once
+// a real company is actually connected.
+const QBO_API_BASE =
+  process.env.QBO_API_ENVIRONMENT === "production"
+    ? "https://quickbooks.api.intuit.com"
+    : "https://sandbox-quickbooks.api.intuit.com";
+
+interface QboConnection {
+  realm_id: string;
+  access_token: string;
+  refresh_token: string;
+  expires_at: string;
+}
+
+async function refreshAccessToken(conn: QboConnection): Promise<QboConnection> {
+  const res = await fetch(INTUIT_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      Authorization: intuitBasicAuthHeader(),
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: conn.refresh_token,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`QBO token refresh failed: ${await res.text()}`);
+  }
+  const tokens = (await res.json()) as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+  };
+  const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+
+  const supabase = supabaseAdmin();
+  await supabase
+    .from("qbo_connections")
+    .update({
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: expiresAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("realm_id", conn.realm_id);
+
+  return { ...conn, access_token: tokens.access_token, refresh_token: tokens.refresh_token, expires_at: expiresAt };
+}
+
+/** Picks the most recently connected company. Fine for a single-company demo/test setup. */
+async function getActiveConnection(): Promise<QboConnection> {
+  const supabase = supabaseAdmin();
+  const { data, error } = await supabase
+    .from("qbo_connections")
+    .select("realm_id, access_token, refresh_token, expires_at")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) {
+    throw new Error("No QuickBooks connection found — connect via /api/qbo/connect first.");
+  }
+
+  if (new Date(data.expires_at).getTime() - Date.now() < 2 * 60 * 1000) {
+    return refreshAccessToken(data);
+  }
+  return data;
+}
+
+// QBO's REST responses are heterogeneous per-entity payloads; callers know
+// the shape they asked for, so this deliberately returns `any` rather than
+// threading a generic through every query/create call site.
+async function qboFetch(conn: QboConnection, path: string, init?: RequestInit): Promise<any> {
+  const res = await fetch(`${QBO_API_BASE}/v3/company/${conn.realm_id}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${conn.access_token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`QBO API error (${path}): ${await res.text()}`);
+  }
+  return res.json();
+}
+
+function escapeQboString(value: string): string {
+  return value.replace(/'/g, "\\'");
+}
+
+async function findOrCreateCustomer(conn: QboConnection, displayName: string): Promise<string> {
+  const query = `select Id from Customer where DisplayName = '${escapeQboString(displayName)}'`;
+  const result = await qboFetch(conn, `/query?query=${encodeURIComponent(query)}`);
+  const existing = result.QueryResponse?.Customer?.[0];
+  if (existing) return existing.Id as string;
+
+  const created = await qboFetch(conn, "/customer", {
+    method: "POST",
+    body: JSON.stringify({ DisplayName: displayName }),
+  });
+  return created.Customer.Id as string;
+}
+
+async function findOrCreateServiceItem(conn: QboConnection, itemName: string): Promise<string> {
+  const query = `select Id from Item where Name = '${escapeQboString(itemName)}'`;
+  const result = await qboFetch(conn, `/query?query=${encodeURIComponent(query)}`);
+  const existing = result.QueryResponse?.Item?.[0];
+  if (existing) return existing.Id as string;
+
+  const accounts = await qboFetch(
+    conn,
+    `/query?query=${encodeURIComponent("select Id from Account where AccountType = 'Income'")}`,
+  );
+  const incomeAccountId = accounts.QueryResponse?.Account?.[0]?.Id;
+  if (!incomeAccountId) {
+    throw new Error("No Income account found in the QuickBooks company to attach the item to.");
+  }
+
+  const created = await qboFetch(conn, "/item", {
+    method: "POST",
+    body: JSON.stringify({
+      Name: itemName,
+      Type: "Service",
+      IncomeAccountRef: { value: incomeAccountId },
+    }),
+  });
+  return created.Item.Id as string;
+}
+
+export interface QboLine {
+  description: string;
+  qty: number;
+  unitPrice: number;
+}
+
+async function buildLines(conn: QboConnection, lines: QboLine[], itemName: string) {
+  const itemId = await findOrCreateServiceItem(conn, itemName);
+  return lines.map((line) => ({
+    DetailType: "SalesItemLineDetail",
+    Amount: Math.round(line.qty * line.unitPrice * 100) / 100,
+    Description: line.description,
+    SalesItemLineDetail: {
+      ItemRef: { value: itemId },
+      Qty: line.qty,
+      UnitPrice: line.unitPrice,
+    },
+  }));
+}
+
+interface QboDocResult {
+  id: string;
+  docNumber: string;
+}
+
+export async function createEstimate(input: {
+  customerName: string;
+  lines: QboLine[];
+  itemName?: string;
+}): Promise<QboDocResult> {
+  const conn = await getActiveConnection();
+  const customerId = await findOrCreateCustomer(conn, input.customerName);
+  const Line = await buildLines(conn, input.lines, input.itemName ?? "Job Sheet Line");
+
+  const result = await qboFetch(conn, "/estimate", {
+    method: "POST",
+    body: JSON.stringify({ CustomerRef: { value: customerId }, Line }),
+  });
+  return { id: result.Estimate.Id, docNumber: result.Estimate.DocNumber };
+}
+
+export async function createInvoice(input: {
+  customerName: string;
+  lines: QboLine[];
+  itemName?: string;
+}): Promise<QboDocResult> {
+  const conn = await getActiveConnection();
+  const customerId = await findOrCreateCustomer(conn, input.customerName);
+  const Line = await buildLines(conn, input.lines, input.itemName ?? "Job Sheet Line");
+
+  const result = await qboFetch(conn, "/invoice", {
+    method: "POST",
+    body: JSON.stringify({ CustomerRef: { value: customerId }, Line }),
+  });
+  return { id: result.Invoice.Id, docNumber: result.Invoice.DocNumber };
+}

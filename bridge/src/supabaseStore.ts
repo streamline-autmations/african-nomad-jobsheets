@@ -109,12 +109,43 @@ export class SupabaseQueueStore implements QueueStore {
   }
 
   async upsertCustomerMirror(name: string, qbdListId: string): Promise<string> {
+    // A plain upsert-on-qbd_list_id can't find a pre-seeded customer row
+    // (qbd_list_id still NULL — NULL never matches in a conflict check), so
+    // it would insert a duplicate instead of filling that row in. Look for
+    // an existing match by ListID first (already synced before), then by
+    // name with no ListID yet (seeded but never synced), before falling
+    // back to a genuine insert.
+    const byListId = await this.client
+      .from("customers")
+      .select("id")
+      .eq("qbd_list_id", qbdListId)
+      .maybeSingle();
+    if (byListId.error) throw byListId.error;
+
+    let target = byListId.data;
+    if (!target) {
+      const byName = await this.client
+        .from("customers")
+        .select("id")
+        .eq("name", name)
+        .is("qbd_list_id", null)
+        .maybeSingle();
+      if (byName.error) throw byName.error;
+      target = byName.data;
+    }
+
+    if (target) {
+      const { error } = await this.client
+        .from("customers")
+        .update({ name, qbd_list_id: qbdListId, last_synced_at: new Date().toISOString() })
+        .eq("id", target.id);
+      if (error) throw error;
+      return target.id as string;
+    }
+
     const { data, error } = await this.client
       .from("customers")
-      .upsert(
-        { name, qbd_list_id: qbdListId, last_synced_at: new Date().toISOString() },
-        { onConflict: "qbd_list_id" },
-      )
+      .insert({ name, qbd_list_id: qbdListId, last_synced_at: new Date().toISOString() })
       .select("id")
       .single();
     if (error) throw error;

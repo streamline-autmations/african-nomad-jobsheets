@@ -9,10 +9,12 @@ import {
   buildItemQuery,
   buildItemServiceAdd,
   buildBillAdd,
+  buildVendorAdd,
+  buildVendorQuery,
   type EstimateLineInput,
 } from "./qbxml/builders";
 import { parseQbdResponse, QBD_STATUS } from "./qbxml/parsers";
-import { qbdName } from "./qbxml/xml";
+import { qbdJobFullName, qbdName } from "./qbxml/xml";
 
 /**
  * One unit of work in a QBWC session. Each step maps to exactly one qbXML
@@ -23,14 +25,21 @@ import { qbdName } from "./qbxml/xml";
 type Step =
   | { kind: "ensure_item"; itemName: string }
   | { kind: "item_service_add"; itemName: string }
-  | { kind: "ensure_customer"; name: string }
-  | { kind: "ensure_customer_add"; name: string }
+  | { kind: "ensure_vendor"; vendorName: string }
+  | { kind: "vendor_add"; vendorName: string }
+  // queryName is what's sent to CustomerQuery (a flat customer name, or a
+  // full "Customer:Job" path); addName/parentName are what get used if a
+  // CustomerAdd is needed — QBD's Name element must be just the leaf
+  // segment, with the parent (if any) given separately via ParentRef.
+  | { kind: "ensure_customer"; queryName: string; addName: string; parentName?: string }
+  | { kind: "ensure_customer_add"; addName: string; parentName?: string }
   | { kind: "customer_add"; queueRowId: string; jobSheetId: string; name: string }
   | { kind: "customer_query"; queueRowId: string; jobSheetId: string; name: string }
   | {
       kind: "estimate_add";
       queueRowId: string;
       jobSheetId: string;
+      /** Pre-sanitised FullName — flat customer, or "Customer:Job". */
       customerName: string;
       memo?: string;
       lines: EstimateLineInput[];
@@ -55,6 +64,8 @@ type Step =
       vendorName: string;
       amount: number;
       memo?: string;
+      /** Pre-sanitised "Customer:Job" FullName, for QBD's own job-costing/Job Profitability reporting. */
+      customerJobRef?: string;
     };
 
 export interface Session {
@@ -147,20 +158,41 @@ export class SessionManager {
     // Customers already getting an explicit create_customer step this batch
     // don't need a separate existence check — that step (and its
     // duplicate-name repair branch) already guarantees they exist by the
-    // time any estimate/invoice referencing them runs.
+    // time any estimate/invoice/bill referencing them runs.
     const customersBeingCreated = new Set<string>();
     for (const row of rows) {
       if (row.action === "create_customer") {
         customersBeingCreated.add(qbdName(row.payload.name ?? row.payload.customer_name_raw ?? ""));
       }
     }
-    // Customers referenced by an estimate/invoice can also arrive with
+    // Customers referenced by an estimate/invoice/bill can also arrive with
     // customer_id already set (e.g. picked from a Supabase customers row
     // that was seeded directly, never through the app's "new customer" flow)
     // while having no matching QBD record — approve_job_sheet only queues
     // create_customer when customer_id is null, so that case is otherwise
     // silently missed. Query-then-create for every such name, deduped.
     const customersToEnsure = new Set<string>();
+    // Full "Customer:Job" name -> parent customer name, for every job any
+    // estimate/invoice/bill in this batch needs to exist first. Always
+    // routed through the prelude (never inlined next to the step that needs
+    // it) because create_estimate and its sibling create_bill rows share the
+    // same transaction timestamp in Postgres, so their relative order in
+    // `rows` isn't guaranteed — the job must exist before ANY of them run.
+    const jobsToEnsure = new Map<string, { parent: string; job: string }>();
+    // Vendors a Bill references must exist in QBD first too — same
+    // not-found-by-default gap as customers, since BillAdd's VendorRef
+    // doesn't auto-create like an item does.
+    const vendorsToEnsure = new Set<string>();
+
+    const noteCustomer = (name: string) => {
+      if (name && !customersBeingCreated.has(name)) customersToEnsure.add(name);
+    };
+    const noteJob = (customerName: string, jobName: string): string => {
+      const full = qbdJobFullName(customerName, jobName);
+      noteCustomer(customerName);
+      jobsToEnsure.set(full, { parent: qbdName(customerName), job: qbdName(jobName) });
+      return full;
+    };
 
     for (const row of rows) {
       switch (row.action) {
@@ -172,61 +204,81 @@ export class SessionManager {
             name: qbdName(row.payload.name ?? row.payload.customer_name_raw ?? ""),
           });
           break;
-        case "create_estimate": {
-          needsServiceItem = true;
-          if (this.config.vatMode === "line") needsVatItem = true;
-          if ((row.payload.discount_amount ?? 0) > 0) needsDiscountItem = true;
-          const customerName = qbdName(row.payload.customer_name_raw ?? "");
-          if (!customersBeingCreated.has(customerName)) customersToEnsure.add(customerName);
-          steps.push({
-            kind: "estimate_add",
-            queueRowId: row.id,
-            jobSheetId: row.job_sheet_id,
-            customerName,
-            memo: row.payload.job_description || undefined,
-            lines: toEstimateLines(row.payload.client_lines),
-            discountAmount: row.payload.discount_amount ?? 0,
-            vatAmount: row.payload.vat_amount ?? 0,
-          });
-          break;
-        }
+        case "create_estimate":
         case "create_invoice": {
           needsServiceItem = true;
           if (this.config.vatMode === "line") needsVatItem = true;
           if ((row.payload.discount_amount ?? 0) > 0) needsDiscountItem = true;
-          const customerName = qbdName(row.payload.customer_name_raw ?? "");
-          if (!customersBeingCreated.has(customerName)) customersToEnsure.add(customerName);
-          steps.push({
-            kind: "invoice_add",
-            queueRowId: row.id,
-            jobSheetId: row.job_sheet_id,
-            customerName,
-            memo: row.payload.job_description || undefined,
-            lines: toEstimateLines(row.payload.client_lines),
-            discountAmount: row.payload.discount_amount ?? 0,
-            vatAmount: row.payload.vat_amount ?? 0,
-            estimateTxnId: row.payload.estimate_txn_id,
-          });
+
+          const baseCustomerName = qbdName(row.payload.customer_name_raw ?? "");
+          const jobName = (row.payload.job_description ?? "").trim();
+          let customerName: string;
+          if (jobName) {
+            customerName = noteJob(baseCustomerName, jobName);
+          } else {
+            noteCustomer(baseCustomerName);
+            customerName = baseCustomerName;
+          }
+
+          if (row.action === "create_estimate") {
+            steps.push({
+              kind: "estimate_add",
+              queueRowId: row.id,
+              jobSheetId: row.job_sheet_id,
+              customerName,
+              memo: row.payload.job_description || undefined,
+              lines: toEstimateLines(row.payload.client_lines),
+              discountAmount: row.payload.discount_amount ?? 0,
+              vatAmount: row.payload.vat_amount ?? 0,
+            });
+          } else {
+            steps.push({
+              kind: "invoice_add",
+              queueRowId: row.id,
+              jobSheetId: row.job_sheet_id,
+              customerName,
+              memo: row.payload.job_description || undefined,
+              lines: toEstimateLines(row.payload.client_lines),
+              discountAmount: row.payload.discount_amount ?? 0,
+              vatAmount: row.payload.vat_amount ?? 0,
+              estimateTxnId: row.payload.estimate_txn_id,
+            });
+          }
           break;
         }
-        case "create_bill":
+        case "create_bill": {
+          const jobCustomerName = (row.payload.job_customer_name ?? "").trim();
+          const jobName = (row.payload.job_name ?? "").trim();
+          const customerJobRef =
+            jobCustomerName && jobName ? noteJob(jobCustomerName, jobName) : undefined;
+          const vendorName = qbdName(row.payload.supplier_name || this.config.defaultVendorName);
+          vendorsToEnsure.add(vendorName);
           steps.push({
             kind: "bill_add",
             queueRowId: row.id,
             supplierBillId: row.payload.supplier_bill_id,
-            vendorName: qbdName(row.payload.supplier_name ?? ""),
+            vendorName,
             amount: row.payload.amount ?? 0,
             memo: row.payload.memo,
+            customerJobRef,
           });
           break;
+        }
       }
     }
 
     // Customers and service items must exist before any transaction
     // references them, so ensure-steps go at the very front of the plan.
+    // Parent customers first, then jobs (which need their parent to exist).
     const prelude: Step[] = [];
     for (const name of customersToEnsure) {
-      prelude.push({ kind: "ensure_customer", name });
+      prelude.push({ kind: "ensure_customer", queryName: name, addName: name });
+    }
+    for (const [full, { parent, job }] of jobsToEnsure) {
+      prelude.push({ kind: "ensure_customer", queryName: full, addName: job, parentName: parent });
+    }
+    for (const vendorName of vendorsToEnsure) {
+      prelude.push({ kind: "ensure_vendor", vendorName });
     }
     if (needsVatItem) {
       prelude.push({ kind: "ensure_item", itemName: this.config.vatItemName });
@@ -256,10 +308,14 @@ export class SessionManager {
         return buildItemQuery(v, requestId, step.itemName);
       case "item_service_add":
         return buildItemServiceAdd(v, requestId, step.itemName, this.config.incomeAccount);
+      case "ensure_vendor":
+        return buildVendorQuery(v, requestId, step.vendorName);
+      case "vendor_add":
+        return buildVendorAdd(v, requestId, step.vendorName);
       case "ensure_customer":
-        return buildCustomerQuery(v, requestId, step.name);
+        return buildCustomerQuery(v, requestId, step.queryName);
       case "ensure_customer_add":
-        return buildCustomerAdd(v, requestId, step.name);
+        return buildCustomerAdd(v, requestId, step.addName, step.parentName);
       case "customer_add":
         return buildCustomerAdd(v, requestId, step.name);
       case "customer_query":
@@ -301,6 +357,7 @@ export class SessionManager {
           amount: step.amount,
           memo: step.memo,
           expenseAccount: this.config.expenseAccount,
+          customerJobRef: step.customerJobRef,
         });
     }
   }
@@ -352,31 +409,57 @@ export class SessionManager {
         return this.advance(session, false);
       }
 
+      case "ensure_vendor": {
+        if (ok) return this.advance(session, true);
+        // Any non-OK on a FullName vendor query is treated as "not found" ->
+        // create it. A genuine race resolves via the 3100 branch below.
+        session.steps.splice(session.index + 1, 0, {
+          kind: "vendor_add",
+          vendorName: step.vendorName,
+        });
+        return this.advance(session, true);
+      }
+
+      case "vendor_add": {
+        if (ok || response.statusCode === QBD_STATUS.DUPLICATE_NAME) {
+          return this.advance(session, true);
+        }
+        session.errors.push(`Could not create vendor "${step.vendorName}": ${response.statusMessage}`);
+        return this.advance(session, false);
+      }
+
       case "ensure_customer": {
+        // Jobs (parentName set) aren't mirrored into the customers table —
+        // that table backs the app's customer dropdown, and a job isn't a
+        // selectable customer.
         if (ok && response.listId) {
-          await this.store.upsertCustomerMirror(step.name, response.listId);
+          if (!step.parentName) await this.store.upsertCustomerMirror(step.queryName, response.listId);
           return this.advance(session, true);
         }
         // Not found by exact FullName -> create it. If it genuinely exists
         // (race with another session), the add below returns 3100, also
-        // treated as success — the estimate/invoice only needs it to exist.
+        // treated as success — the estimate/invoice/bill only needs it to exist.
         session.steps.splice(session.index + 1, 0, {
           kind: "ensure_customer_add",
-          name: step.name,
+          addName: step.addName,
+          parentName: step.parentName,
         });
         return this.advance(session, true);
       }
 
       case "ensure_customer_add": {
+        const fullName = step.parentName
+          ? `${step.parentName}:${step.addName}`
+          : step.addName;
         if (ok && response.listId) {
-          await this.store.upsertCustomerMirror(step.name, response.listId);
+          if (!step.parentName) await this.store.upsertCustomerMirror(fullName, response.listId);
           return this.advance(session, true);
         }
         if (response.statusCode === QBD_STATUS.DUPLICATE_NAME) {
           return this.advance(session, true);
         }
         session.errors.push(
-          `Could not ensure customer "${step.name}" exists in QBD: ${response.statusMessage}`,
+          `Could not ensure customer "${fullName}" exists in QBD: ${response.statusMessage}`,
         );
         return this.advance(session, false);
       }
