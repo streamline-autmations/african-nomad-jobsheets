@@ -1,4 +1,6 @@
+import { useRef, useState } from "react";
 import { getCompanyDetails } from "../lib/anCompany";
+import { downloadElementAsPdf } from "../lib/pdfDownload";
 import type { JobSheet } from "../types";
 
 interface JobSheetDocumentProps {
@@ -19,10 +21,31 @@ function formatMoney(value: number): string {
 // name) so "Print / Save as PDF" behaves identically across both document
 // types in the app.
 export function JobSheetDocument({ job, companyName, onClose }: JobSheetDocumentProps) {
+  const printRef = useRef<HTMLDivElement>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
   const isInvoiced = Boolean(job.qbdInvoiceTxnId);
   const company = getCompanyDetails(companyName);
   const title = isInvoiced ? "INVOICE" : "QUOTE";
   const date = isInvoiced ? job.syncedAt ?? job.createdAt : job.createdAt;
+
+  async function handleDownload() {
+    if (!printRef.current) return;
+    setDownloadError(null);
+    setDownloading(true);
+    try {
+      const safeCustomer = (job.customerNameRaw || "customer").replace(/[^a-z0-9]+/gi, "-");
+      await downloadElementAsPdf(
+        printRef.current,
+        `${title === "INVOICE" ? "Invoice" : "Quote"}-${safeCustomer}-${job.id.slice(0, 8)}.pdf`,
+      );
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     <div className="nsa-doc-overlay">
@@ -30,12 +53,16 @@ export function JobSheetDocument({ job, companyName, onClose }: JobSheetDocument
         <button type="button" className="btn-secondary" onClick={onClose}>
           Close
         </button>
+        {downloadError && <span className="banner banner-error">{downloadError}</span>}
+        <button type="button" className="btn-secondary" disabled={downloading} onClick={handleDownload}>
+          {downloading ? "Downloading…" : "Download PDF"}
+        </button>
         <button type="button" className="btn-primary" onClick={() => window.print()}>
           Print / Save as PDF
         </button>
       </div>
 
-      <div className="nsa-quote-print">
+      <div className="nsa-quote-print" ref={printRef}>
         <div className="nsa-doc-header">
           <div className="nsa-doc-title-block">
             <h1>{title}</h1>

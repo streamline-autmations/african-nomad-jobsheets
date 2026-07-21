@@ -184,6 +184,14 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
         <div className="banner">Editing an existing draft — changes replace what&apos;s there.</div>
       )}
 
+      <div className="form-section-heading">
+        <h3>Job details</h3>
+        <p className="section-description">
+          Which company is doing the work, who it's for, and what the job is — the description
+          becomes a trackable Job in QuickBooks once this sheet is approved and synced.
+        </p>
+      </div>
+
       <div className="form-grid">
         <CompanySelect companies={companies} value={companyId} onChange={setCompanyId} />
 
@@ -212,6 +220,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
             onChange={(e) => setJobDescription(e.target.value)}
             placeholder="e.g. Corporate gifting — Q3 site visit"
           />
+          <p className="field-note">Used as the QuickBooks Job name — keep it short and specific.</p>
         </label>
 
         <label className="field">
@@ -232,6 +241,9 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
 
       <div className="financial-summary">
         <h3>Summary</h3>
+        <p className="section-description">
+          Calculates automatically as you fill in lines above — nothing here needs typing.
+        </p>
         <div className="financial-summary-columns">
           <div className="financial-grid">
             <span>Client subtotal</span>

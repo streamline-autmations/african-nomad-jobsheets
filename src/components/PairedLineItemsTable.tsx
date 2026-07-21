@@ -38,7 +38,15 @@ export function PairedLineItemsTable({
   return (
     <div className="paired-line-items">
       <div className="line-items-header">
-        <h3>Job lines — client price &amp; supplier cost side by side</h3>
+        <div>
+          <h3>Job lines</h3>
+          <p className="section-description">
+            One row per item. Fill in the <strong>client</strong> side for what you're charging,
+            the <strong>supplier</strong> side for what it costs you — or just one side if a line
+            is pure margin (no tracked cost) or a cost that isn't billed to the client separately
+            (e.g. bulk printing folded into markup elsewhere).
+          </p>
+        </div>
         <button type="button" className="btn-secondary" onClick={addRow}>
           + Add line
         </button>
@@ -55,13 +63,22 @@ export function PairedLineItemsTable({
       <div className="paired-table" role="table">
         <div className="paired-row paired-row-head" role="row">
           <span role="columnheader">Description</span>
-          <span role="columnheader" className="paired-group-head">
-            Client
+          <div className="paired-cell paired-client-cell paired-cell-head" role="columnheader">
+            <span className="paired-group-label">Client — what you charge</span>
+            <span>Qty</span>
+            <span>Price</span>
+            <span>Total</span>
+          </div>
+          <div className="paired-cell paired-supplier-cell paired-cell-head" role="columnheader">
+            <span className="paired-group-label">Supplier — what it costs you</span>
+            <span>Vendor</span>
+            <span>Qty</span>
+            <span>Cost</span>
+            <span>Total</span>
+          </div>
+          <span role="columnheader" title="Profit margin on this line">
+            Markup
           </span>
-          <span role="columnheader" className="paired-group-head">
-            Supplier / Expense
-          </span>
-          <span role="columnheader">Markup</span>
           <span role="columnheader" aria-label="Remove" />
         </div>
 
@@ -76,7 +93,8 @@ export function PairedLineItemsTable({
               <input
                 type="text"
                 value={row.description}
-                placeholder="Description"
+                placeholder="e.g. Lanyard"
+                aria-label="Description"
                 list={descriptionSuggestions ? datalistId : undefined}
                 onChange={(e) => updateRow(row.id, { description: e.target.value })}
               />
@@ -86,7 +104,8 @@ export function PairedLineItemsTable({
                   type="number"
                   min={0}
                   step="1"
-                  placeholder="Qty"
+                  placeholder="0"
+                  aria-label="Client quantity"
                   value={row.clientQty}
                   onChange={(e) => updateRow(row.id, { clientQty: Number(e.target.value) || 0 })}
                 />
@@ -94,7 +113,8 @@ export function PairedLineItemsTable({
                   type="number"
                   min={0}
                   step="0.01"
-                  placeholder="Client price"
+                  placeholder="0.00"
+                  aria-label="Client price per unit"
                   value={row.clientUnitCost}
                   onChange={(e) =>
                     updateRow(row.id, { clientUnitCost: Number(e.target.value) || 0 })
@@ -106,7 +126,8 @@ export function PairedLineItemsTable({
               <div className="paired-cell paired-supplier-cell">
                 <input
                   type="text"
-                  placeholder="Vendor"
+                  placeholder="Supplier name"
+                  aria-label="Vendor"
                   value={row.vendorName}
                   onChange={(e) => updateRow(row.id, { vendorName: e.target.value })}
                 />
@@ -114,7 +135,8 @@ export function PairedLineItemsTable({
                   type="number"
                   min={0}
                   step="1"
-                  placeholder="Qty"
+                  placeholder="0"
+                  aria-label="Supplier quantity"
                   value={row.supplierQty}
                   onChange={(e) => updateRow(row.id, { supplierQty: Number(e.target.value) || 0 })}
                 />
@@ -122,7 +144,8 @@ export function PairedLineItemsTable({
                   type="number"
                   min={0}
                   step="0.01"
-                  placeholder="Cost"
+                  placeholder="0.00"
+                  aria-label="Supplier cost per unit"
                   value={row.supplierUnitCost}
                   onChange={(e) =>
                     updateRow(row.id, { supplierUnitCost: Number(e.target.value) || 0 })
@@ -131,7 +154,10 @@ export function PairedLineItemsTable({
                 <span className="line-total">R {supplierTotal.toFixed(2)}</span>
               </div>
 
-              <span className={markup !== null && markup < 20 ? "margin-flag" : ""}>
+              <span
+                className={`paired-markup ${markup !== null && markup < 20 ? "margin-flag" : ""}`}
+                title="(Client total − supplier total) ÷ client total"
+              >
                 {markup === null ? "—" : `${markup.toFixed(0)}%`}
               </span>
 
@@ -152,10 +178,10 @@ export function PairedLineItemsTable({
 
       <div className="paired-subtotals">
         <span>
-          Client subtotal: <strong>R {clientSubtotal.toFixed(2)}</strong>
+          Client subtotal <strong>R {clientSubtotal.toFixed(2)}</strong>
         </span>
         <span>
-          Supplier / expense subtotal: <strong>R {supplierSubtotal.toFixed(2)}</strong>
+          Supplier / expense subtotal <strong>R {supplierSubtotal.toFixed(2)}</strong>
         </span>
       </div>
     </div>

@@ -1,4 +1,6 @@
+import { useRef, useState } from "react";
 import { NSA_COMPANY } from "../lib/nsaCompany";
+import { downloadElementAsPdf } from "../lib/pdfDownload";
 import type { NsaQuote } from "../nsaTypes";
 import nsaLogo from "../assets/nsa-mining-logo.jpg";
 
@@ -25,11 +27,33 @@ function formatMoney(value: number): string {
 // top-right, a shaded Bill to/Ship to panel, a quote-details row, the line
 // item table, and a totals block.
 export function NsaQuoteDocument({ quote, docType, onClose }: NsaQuoteDocumentProps) {
+  const printRef = useRef<HTMLDivElement>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
   const title = docType === "quote" ? "QUOTE" : "INVOICE";
   const number = docType === "quote" ? quote.quoteNumber : quote.nsaInvoiceNumber ?? "";
   const dateLabel = docType === "quote" ? "Quote date" : "Invoice date";
   const numberLabel = docType === "quote" ? "Quote no." : "Invoice no.";
   const date = docType === "quote" ? quote.createdAt : quote.invoicedAt ?? quote.createdAt;
+
+  async function handleDownload() {
+    if (!printRef.current) return;
+    setDownloadError(null);
+    setDownloading(true);
+    try {
+      const safeClient = (quote.clientName || "client").replace(/[^a-z0-9]+/gi, "-");
+      const safeNumber = (number || quote.id.slice(0, 8)).replace(/[^a-z0-9]+/gi, "-");
+      await downloadElementAsPdf(
+        printRef.current,
+        `${title === "INVOICE" ? "Invoice" : "Quote"}-${safeNumber}-${safeClient}.pdf`,
+      );
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     <div className="nsa-doc-overlay">
@@ -37,12 +61,16 @@ export function NsaQuoteDocument({ quote, docType, onClose }: NsaQuoteDocumentPr
         <button type="button" className="btn-secondary" onClick={onClose}>
           Close
         </button>
+        {downloadError && <span className="banner banner-error">{downloadError}</span>}
+        <button type="button" className="btn-secondary" disabled={downloading} onClick={handleDownload}>
+          {downloading ? "Downloading…" : "Download PDF"}
+        </button>
         <button type="button" className="btn-primary" onClick={() => window.print()}>
           Print / Save as PDF
         </button>
       </div>
 
-      <div className="nsa-quote-print">
+      <div className="nsa-quote-print" ref={printRef}>
         <div className="nsa-doc-header">
           <div className="nsa-doc-title-block">
             <h1>{title}</h1>
