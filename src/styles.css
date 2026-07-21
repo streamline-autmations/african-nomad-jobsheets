@@ -165,6 +165,91 @@ body {
   width: 100%;
 }
 
+/* Paired client/supplier line items — mirrors the real spreadsheet's
+   side-by-side layout (client price and supplier cost on the same row). */
+.paired-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.paired-row {
+  display: grid;
+  grid-template-columns: 1.6fr 2fr 2.4fr 0.7fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.paired-row-head {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: none;
+}
+
+.paired-group-head {
+  text-align: center;
+}
+
+.paired-row > input {
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 100%;
+}
+
+.paired-cell {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+  align-items: center;
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 0.35rem;
+}
+
+.paired-supplier-cell {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.paired-cell input {
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.paired-cell .line-total {
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.paired-subtotals {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2rem;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.financial-summary-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.financial-summary-columns .financial-grid-fees {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  border-left: 1px dashed var(--border);
+  padding-left: 1.5rem;
+}
+
 .line-total {
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -293,6 +378,26 @@ body {
 
 .approval-list-item.selected {
   border-color: var(--accent);
+}
+
+.sync-history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
 }
 
 .approval-detail {
@@ -516,6 +621,27 @@ body {
     grid-template-columns: 1fr;
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.5rem;
+  }
+
+  .paired-row {
+    grid-template-columns: 1fr;
+    padding-bottom: 0.75rem;
+  }
+
+  .paired-row-head {
+    display: none;
+  }
+
+  .financial-summary-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .financial-summary-columns .financial-grid-fees {
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px dashed var(--border);
+    padding-top: 0.75rem;
+    margin-top: 0.75rem;
   }
 
   .line-items-row-head {

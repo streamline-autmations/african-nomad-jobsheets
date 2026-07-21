@@ -1,34 +1,50 @@
 import { useEffect, useMemo, useState } from "react";
 import { CompanySelect } from "./CompanySelect";
 import { CustomerSelect } from "./CustomerSelect";
-import { LineItemsTable } from "./LineItemsTable";
+import { PairedLineItemsTable } from "./PairedLineItemsTable";
 import { calculateJobSheetFinancials, withLineTotal } from "../lib/feeCalculations";
+import {
+  emptyPairedRow,
+  linesToPairedRows,
+  pairedRowsToLines,
+  type PairedRow,
+} from "../lib/pairedLineItems";
 import {
   fetchCommonExpenses,
   fetchCompanies,
   fetchCustomers,
+  fetchJobSheetById,
   saveJobSheetDraft,
 } from "../lib/jobSheets";
-import type { CommonExpense, Company, Customer, LineItemInput } from "../types";
+import type { CommonExpense, Company, Customer } from "../types";
 
-function emptyLine(): LineItemInput {
-  return { id: crypto.randomUUID(), description: "", qty: 1, unitCost: 0 };
+interface JobSheetFormProps {
+  /** When set, loads that existing draft for editing instead of starting blank
+   * (e.g. an AN Job Sheet created from an NSA Quote, which has no expenses yet). */
+  editJobSheetId?: string | null;
+  /** Called after a successful save while editing — lets the caller navigate
+   * back (e.g. to Approvals) instead of leaving a stale editing session open. */
+  onEditSaved?: () => void;
 }
 
-export function JobSheetForm() {
+export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps) {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [commonExpenses, setCommonExpenses] = useState<CommonExpense[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [editingId, setEditingId] = useState<string | undefined>(undefined);
+  const [loadingExisting, setLoadingExisting] = useState(false);
   const [companyId, setCompanyId] = useState("");
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerNameRaw, setCustomerNameRaw] = useState("");
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [jobDescription, setJobDescription] = useState("");
   const [eventDate, setEventDate] = useState("");
-  const [clientLines, setClientLines] = useState<LineItemInput[]>([emptyLine()]);
-  const [expenseLines, setExpenseLines] = useState<LineItemInput[]>([emptyLine()]);
+  // The form works in "paired rows" (client price + supplier cost on one
+  // line, matching the real spreadsheet) — derived into the two separate
+  // arrays the database/QBD pipeline actually store only at save time.
+  const [pairedRows, setPairedRows] = useState<PairedRow[]>([emptyPairedRow()]);
 
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -52,7 +68,40 @@ export function JobSheetForm() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!editJobSheetId) return;
+    let cancelled = false;
+    setLoadingExisting(true);
+    fetchJobSheetById(editJobSheetId)
+      .then((job) => {
+        if (cancelled) return;
+        setEditingId(job.id);
+        setCompanyId(job.companyId);
+        setCustomerId(job.customerId);
+        setCustomerNameRaw(job.customerNameRaw);
+        setIsNewCustomer(job.customerId === null);
+        setJobDescription(job.jobDescription);
+        setEventDate(job.eventDate ?? "");
+        setPairedRows(linesToPairedRows(job.clientLines, job.expenseLines));
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingExisting(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editJobSheetId]);
+
   const selectedCompany = companies.find((c) => c.id === companyId);
+
+  const { clientLines, expenseLines } = useMemo(
+    () => pairedRowsToLines(pairedRows),
+    [pairedRows],
+  );
 
   const financials = useMemo(() => {
     return calculateJobSheetFinancials({
@@ -70,8 +119,7 @@ export function JobSheetForm() {
     setIsNewCustomer(false);
     setJobDescription("");
     setEventDate("");
-    setClientLines([emptyLine()]);
-    setExpenseLines([emptyLine()]);
+    setPairedRows([emptyPairedRow()]);
   }
 
   async function handleSave() {
@@ -94,6 +142,7 @@ export function JobSheetForm() {
     setSaving(true);
     try {
       await saveJobSheetDraft({
+        id: editingId,
         companyId,
         companyName: selectedCompany?.name ?? "",
         customerId: isNewCustomer ? null : customerId,
@@ -103,8 +152,13 @@ export function JobSheetForm() {
         clientLines: clientLines.map(withLineTotal),
         expenseLines: expenseLines.map(withLineTotal),
       });
-      setSaveMessage("Draft saved.");
-      resetForm();
+      if (editingId) {
+        setSaveMessage("Draft updated.");
+        onEditSaved?.();
+      } else {
+        setSaveMessage("Draft saved.");
+        resetForm();
+      }
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -120,8 +174,16 @@ export function JobSheetForm() {
     );
   }
 
+  if (loadingExisting) {
+    return <p>Loading job sheet…</p>;
+  }
+
   return (
     <div className="job-sheet-form">
+      {editingId && (
+        <div className="banner">Editing an existing draft — changes replace what&apos;s there.</div>
+      )}
+
       <div className="form-grid">
         <CompanySelect companies={companies} value={companyId} onChange={setCompanyId} />
 
@@ -162,74 +224,65 @@ export function JobSheetForm() {
         </label>
       </div>
 
-      <LineItemsTable
-        title="Client line items"
-        lines={clientLines}
-        onChange={setClientLines}
-      />
-
-      <LineItemsTable
-        title="Expenses"
-        lines={expenseLines}
-        onChange={setExpenseLines}
+      <PairedLineItemsTable
+        rows={pairedRows}
+        onChange={setPairedRows}
         descriptionSuggestions={commonExpenses.map((e) => e.label)}
-        showVendor
       />
 
       <div className="financial-summary">
         <h3>Summary</h3>
-        <div className="financial-grid">
-          <span>Client subtotal</span>
-          <strong>R {financials.clientSubtotal.toFixed(2)}</strong>
+        <div className="financial-summary-columns">
+          <div className="financial-grid">
+            <span>Client subtotal</span>
+            <strong>R {financials.clientSubtotal.toFixed(2)}</strong>
 
-          {financials.sibanyeDiscount > 0 && (
-            <>
-              <span>Sibanye discount (2.5%)</span>
-              <strong>- R {financials.sibanyeDiscount.toFixed(2)}</strong>
-            </>
-          )}
+            {financials.sibanyeDiscount > 0 && (
+              <>
+                <span>Sibanye discount (2.5%)</span>
+                <strong>- R {financials.sibanyeDiscount.toFixed(2)}</strong>
+              </>
+            )}
 
-          <span>VAT (15%)</span>
-          <strong>R {financials.vatAmount.toFixed(2)}</strong>
+            <span>VAT (15%)</span>
+            <strong>R {financials.vatAmount.toFixed(2)}</strong>
 
-          <span>Client total (incl. VAT)</span>
-          <strong>R {financials.clientTotal.toFixed(2)}</strong>
+            <span>Client total (incl. VAT)</span>
+            <strong>R {financials.clientTotal.toFixed(2)}</strong>
+          </div>
 
-          <span>Expense total</span>
-          <strong>R {financials.expenseTotal.toFixed(2)}</strong>
+          <div className="financial-grid financial-grid-fees">
+            <span>Expense total</span>
+            <strong>R {financials.expenseTotal.toFixed(2)}</strong>
 
-          <span>Gross profit</span>
-          <strong>R {financials.grossProfit.toFixed(2)}</strong>
+            <span>Gross profit</span>
+            <strong>R {financials.grossProfit.toFixed(2)}</strong>
 
-          <span>Gross margin</span>
-          <strong className={financials.belowMarginTarget ? "margin-flag" : ""}>
-            {financials.profitMarginPct.toFixed(1)}%
-            {financials.belowMarginTarget && " ⚠ below 20% target"}
-          </strong>
-        </div>
+            <span>Gross margin</span>
+            <strong className={financials.belowMarginTarget ? "margin-flag" : ""}>
+              {financials.profitMarginPct.toFixed(1)}%
+              {financials.belowMarginTarget && " ⚠ below 20% target"}
+            </strong>
 
-        <div className="financial-grid financial-grid-fees">
-          {selectedCompany?.name === "African Nomad" && (
-            <>
-              <span>NSA fee (10%)</span>
-              <strong>R {financials.nsaFee.toFixed(2)}</strong>
-            </>
-          )}
-          {selectedCompany?.name === "Tuscany SA" && (
-            <>
-              <span>Silent partner fee (10%)</span>
-              <strong>R {financials.tuscanyFee.toFixed(2)}</strong>
-            </>
-          )}
+            {selectedCompany?.name === "African Nomad" && (
+              <>
+                <span>NSA fee (10%)</span>
+                <strong>R {financials.nsaFee.toFixed(2)}</strong>
+              </>
+            )}
+            {selectedCompany?.name === "Tuscany SA" && (
+              <>
+                <span>Silent partner fee (10%)</span>
+                <strong>R {financials.tuscanyFee.toFixed(2)}</strong>
+              </>
+            )}
 
-          <span>Total fees</span>
-          <strong>R {financials.totalFees.toFixed(2)}</strong>
+            <span>Net profit</span>
+            <strong>R {financials.netProfit.toFixed(2)}</strong>
 
-          <span>Net profit</span>
-          <strong>R {financials.netProfit.toFixed(2)}</strong>
-
-          <span>Net margin</span>
-          <strong>{financials.netMarginPct.toFixed(1)}%</strong>
+            <span>Net margin</span>
+            <strong>{financials.netMarginPct.toFixed(1)}%</strong>
+          </div>
         </div>
       </div>
 
@@ -242,7 +295,7 @@ export function JobSheetForm() {
         disabled={saving}
         onClick={handleSave}
       >
-        {saving ? "Saving…" : "Save draft"}
+        {saving ? "Saving…" : editingId ? "Save changes" : "Save draft"}
       </button>
     </div>
   );

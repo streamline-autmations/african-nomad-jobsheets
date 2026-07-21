@@ -172,13 +172,17 @@ export class SessionManager {
     // create_customer when customer_id is null, so that case is otherwise
     // silently missed. Query-then-create for every such name, deduped.
     const customersToEnsure = new Set<string>();
-    // Full "Customer:Job" name -> parent customer name, for every job any
-    // estimate/invoice/bill in this batch needs to exist first. Always
-    // routed through the prelude (never inlined next to the step that needs
-    // it) because create_estimate and its sibling create_bill rows share the
-    // same transaction timestamp in Postgres, so their relative order in
-    // `rows` isn't guaranteed — the job must exist before ANY of them run.
-    const jobsToEnsure = new Map<string, { parent: string; job: string }>();
+    // Full "Customer:Job" name -> parent/job, for jobs whose parent customer
+    // already exists in QBD (safe to ensure in the prelude, before anything
+    // else runs).
+    const jobsNeedingPreludeEnsure = new Map<string, { parent: string; job: string }>();
+    // Same, but for jobs whose parent is ALSO being created this batch (a
+    // brand-new customer with a job — the mainline case for any job sheet
+    // converted from an NSA Quote, since those always start with
+    // customer_id null). These CANNOT go in the prelude: the parent doesn't
+    // exist yet until its customer_add step runs, so the job-ensure has to
+    // be spliced in right after that specific step instead.
+    const jobsNeedingInlineEnsure = new Map<string, { parent: string; job: string }>();
     // Vendors a Bill references must exist in QBD first too — same
     // not-found-by-default gap as customers, since BillAdd's VendorRef
     // doesn't auto-create like an item does.
@@ -189,21 +193,29 @@ export class SessionManager {
     };
     const noteJob = (customerName: string, jobName: string): string => {
       const full = qbdJobFullName(customerName, jobName);
-      noteCustomer(customerName);
-      jobsToEnsure.set(full, { parent: qbdName(customerName), job: qbdName(jobName) });
+      const parent = qbdName(customerName);
+      const job = qbdName(jobName);
+      if (customersBeingCreated.has(parent)) {
+        jobsNeedingInlineEnsure.set(full, { parent, job });
+      } else {
+        noteCustomer(customerName);
+        jobsNeedingPreludeEnsure.set(full, { parent, job });
+      }
       return full;
     };
 
     for (const row of rows) {
       switch (row.action) {
-        case "create_customer":
+        case "create_customer": {
+          const name = qbdName(row.payload.name ?? row.payload.customer_name_raw ?? "");
           steps.push({
             kind: "customer_add",
             queueRowId: row.id,
             jobSheetId: row.job_sheet_id,
-            name: qbdName(row.payload.name ?? row.payload.customer_name_raw ?? ""),
+            name,
           });
           break;
+        }
         case "create_estimate":
         case "create_invoice": {
           needsServiceItem = true;
@@ -267,14 +279,50 @@ export class SessionManager {
       }
     }
 
+    // Any customer_add a same-batch job depends on must run before EVERY
+    // transaction step in this batch, not just steps for its own job sheet.
+    // Every row from one approve_job_sheet() call shares the exact same
+    // created_at timestamp (one transaction), so Postgres does not
+    // guarantee fetchPendingRows() returns them in insertion order —
+    // customer_add can land after its dependents just as easily as before
+    // them. Rather than trust row order, hoist each such customer_add (paired
+    // with its job-ensure) unconditionally to the very front instead.
+    const jobsByParent = new Map<string, { parent: string; job: string }[]>();
+    for (const entry of jobsNeedingInlineEnsure.values()) {
+      const list = jobsByParent.get(entry.parent) ?? [];
+      list.push(entry);
+      jobsByParent.set(entry.parent, list);
+    }
+
+    const hoisted: Step[] = [];
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const step = steps[i];
+      if (step.kind === "customer_add" && jobsByParent.has(step.name)) {
+        const [removed] = steps.splice(i, 1);
+        const jobs = jobsByParent.get(step.name)!;
+        const block: Step[] = [
+          removed,
+          ...jobs.map(({ parent, job }): Step => ({
+            kind: "ensure_customer",
+            queryName: qbdJobFullName(parent, job),
+            addName: job,
+            parentName: parent,
+          })),
+        ];
+        hoisted.unshift(...block);
+      }
+    }
+    steps.unshift(...hoisted);
+
     // Customers and service items must exist before any transaction
     // references them, so ensure-steps go at the very front of the plan.
-    // Parent customers first, then jobs (which need their parent to exist).
+    // Parent customers first, then jobs whose parent already exists in QBD
+    // (jobs whose parent is new this batch were already spliced in above).
     const prelude: Step[] = [];
     for (const name of customersToEnsure) {
       prelude.push({ kind: "ensure_customer", queryName: name, addName: name });
     }
-    for (const [full, { parent, job }] of jobsToEnsure) {
+    for (const [full, { parent, job }] of jobsNeedingPreludeEnsure) {
       prelude.push({ kind: "ensure_customer", queryName: full, addName: job, parentName: parent });
     }
     for (const vendorName of vendorsToEnsure) {
@@ -523,8 +571,13 @@ export class SessionManager {
           session.touchedRowIds.add(step.queueRowId);
           return this.advance(session, true);
         }
+        // Deliberately doesn't call jobSheetFailed() — every create_invoice
+        // action today converts an already-'synced' job sheet (see
+        // convert_job_sheet_to_invoice()), so a failed invoice attempt must
+        // not clobber a perfectly valid, already-confirmed Estimate's
+        // status. The failure is still visible and retryable via this
+        // queue row itself.
         await this.store.markFailed(step.queueRowId, response.statusMessage);
-        await this.store.jobSheetFailed(step.jobSheetId);
         session.errors.push(`InvoiceAdd failed: ${response.statusMessage}`);
         return this.advance(session, false);
       }
@@ -546,7 +599,12 @@ export class SessionManager {
     if ("queueRowId" in step && step.queueRowId) {
       await this.store.markFailed(step.queueRowId, message);
     }
-    if ("jobSheetId" in step && step.jobSheetId) {
+    // Only a failed Estimate genuinely means "this job sheet has no valid
+    // QBD record" — invoice_add also carries a jobSheetId (needed for
+    // jobSheetInvoiceSynced on success) but must not corrupt an
+    // already-'synced' sheet's status if the invoice step itself fails for
+    // an unrelated reason (e.g. an unparseable QBD response).
+    if (step.kind === "estimate_add") {
       await this.store.jobSheetFailed(step.jobSheetId);
     }
   }

@@ -56,6 +56,16 @@ export interface JobSheetFinancials {
   belowMarginTarget: boolean;
 }
 
+export interface JobSheetFile {
+  id: string;
+  jobSheetId: string;
+  fileName: string;
+  storagePath: string;
+  contentType: string | null;
+  sizeBytes: number | null;
+  uploadedAt: string;
+}
+
 export interface JobSheet extends JobSheetFinancials {
   id: string;
   companyId: string;

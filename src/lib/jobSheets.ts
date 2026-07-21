@@ -5,6 +5,7 @@ import type {
   Company,
   Customer,
   JobSheet,
+  JobSheetFile,
   JobSheetFinancials,
   LineItem,
 } from "../types";
@@ -128,6 +129,19 @@ export async function fetchDraftJobSheets(): Promise<JobSheet[]> {
   return (data ?? []).map(toJobSheet);
 }
 
+// Every job sheet regardless of status — backs the History view. Draft ones
+// still show up here too (fetchDraftJobSheets stays as the Approvals tab's
+// narrower "needs action" list).
+export async function fetchAllJobSheets(): Promise<JobSheet[]> {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("job_sheets")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(toJobSheet);
+}
+
 export async function fetchJobSheetById(id: string): Promise<JobSheet> {
   const client = requireSupabase();
   const { data, error } = await client
@@ -220,6 +234,30 @@ export async function approveJobSheet(id: string): Promise<JobSheet> {
   return toJobSheet(data as JobSheetRow);
 }
 
+// Resets every failed sync-queue row for this job sheet back to pending and
+// the sheet back to 'approved', so the next Web Connector cycle retries it —
+// without this, retrying required direct SQL access.
+export async function retryJobSheet(id: string): Promise<JobSheet> {
+  const client = requireSupabase();
+  const { data, error } = await client.rpc("retry_job_sheet", {
+    p_job_sheet_id: id,
+  });
+  if (error) throw error;
+  return toJobSheet(data as JobSheetRow);
+}
+
+// Queues a create_invoice sync action against the job sheet's already-
+// confirmed QBD Estimate (linked via LinkedTxnID in the bridge). Only valid
+// once the sheet is 'synced' with an estimate txn id and not already invoiced.
+export async function convertJobSheetToInvoice(id: string): Promise<JobSheet> {
+  const client = requireSupabase();
+  const { data, error } = await client.rpc("convert_job_sheet_to_invoice", {
+    p_job_sheet_id: id,
+  });
+  if (error) throw error;
+  return toJobSheet(data as JobSheetRow);
+}
+
 export type SyncQueueStatus = "pending" | "sent" | "confirmed" | "failed";
 
 export interface SyncQueueEntry {
@@ -253,4 +291,92 @@ export async function fetchSyncQueueForJobSheet(
     createdAt: row.created_at,
     syncedAt: row.synced_at,
   }));
+}
+
+// Files attached to a job sheet — generated quote/invoice PDFs, scanned
+// supplier invoices, delivery notes, etc. Lives entirely in this app
+// (Supabase Storage): QuickBooks Desktop's own Attached Documents feature
+// isn't reachable through qbXML/Web Connector at all.
+const JOB_SHEET_FILES_BUCKET = "job-sheet-files";
+
+function toJobSheetFile(row: {
+  id: string;
+  job_sheet_id: string;
+  file_name: string;
+  storage_path: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  uploaded_at: string;
+}): JobSheetFile {
+  return {
+    id: row.id,
+    jobSheetId: row.job_sheet_id,
+    fileName: row.file_name,
+    storagePath: row.storage_path,
+    contentType: row.content_type,
+    sizeBytes: row.size_bytes,
+    uploadedAt: row.uploaded_at,
+  };
+}
+
+export async function fetchJobSheetFiles(jobSheetId: string): Promise<JobSheetFile[]> {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("job_sheet_files")
+    .select("*")
+    .eq("job_sheet_id", jobSheetId)
+    .order("uploaded_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(toJobSheetFile);
+}
+
+export async function uploadJobSheetFile(
+  jobSheetId: string,
+  file: File,
+): Promise<JobSheetFile> {
+  const client = requireSupabase();
+  // Prefixed with a random id so two uploads of a same-named file (e.g. two
+  // "invoice.pdf" downloads) never collide in storage.
+  const storagePath = `${jobSheetId}/${crypto.randomUUID()}-${file.name}`;
+
+  const { error: uploadError } = await client.storage
+    .from(JOB_SHEET_FILES_BUCKET)
+    .upload(storagePath, file, { contentType: file.type || undefined });
+  if (uploadError) throw uploadError;
+
+  const { data, error } = await client
+    .from("job_sheet_files")
+    .insert({
+      job_sheet_id: jobSheetId,
+      file_name: file.name,
+      storage_path: storagePath,
+      content_type: file.type || null,
+      size_bytes: file.size,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return toJobSheetFile(data);
+}
+
+// Bucket is private, so downloads go through a short-lived signed URL rather
+// than a public one.
+export async function getJobSheetFileDownloadUrl(storagePath: string): Promise<string> {
+  const client = requireSupabase();
+  const { data, error } = await client.storage
+    .from(JOB_SHEET_FILES_BUCKET)
+    .createSignedUrl(storagePath, 60);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+export async function deleteJobSheetFile(id: string, storagePath: string): Promise<void> {
+  const client = requireSupabase();
+  const { error: storageError } = await client.storage
+    .from(JOB_SHEET_FILES_BUCKET)
+    .remove([storagePath]);
+  if (storageError) throw storageError;
+
+  const { error } = await client.from("job_sheet_files").delete().eq("id", id);
+  if (error) throw error;
 }

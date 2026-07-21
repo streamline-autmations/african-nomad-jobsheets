@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { approveJobSheet, fetchDraftJobSheets } from "../lib/jobSheets";
 import type { JobSheet } from "../types";
 
-export function ApprovalView() {
+interface ApprovalViewProps {
+  onEditJobSheet: (id: string) => void;
+}
+
+export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [drafts, setDrafts] = useState<JobSheet[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -107,14 +111,24 @@ export function ApprovalView() {
 
           {approveError && <div className="banner banner-error">{approveError}</div>}
 
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={approving}
-            onClick={() => handleApprove(selected)}
-          >
-            {approving ? "Approving…" : "Approve"}
-          </button>
+          <div className="line-items-header">
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={approving}
+              onClick={() => onEditJobSheet(selected.id)}
+            >
+              Edit (add expenses, change lines…)
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={approving}
+              onClick={() => handleApprove(selected)}
+            >
+              {approving ? "Approving…" : "Approve"}
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -180,8 +180,12 @@ export function buildInvoiceAdd(
   input: InvoiceAddInput,
 ): string {
   const memo = input.memo ? `<Memo>${escapeXml(qbdDesc(input.memo))}</Memo>` : "";
+  // QBD's actual schema element for this is LinkToTxnID, not LinkedTxnID —
+  // an unrecognised element name makes QBD reject the whole document rather
+  // than return a normal error status, which is why real-world testing saw
+  // "Response is not a qbXML document" instead of a clean statusCode error.
   const link = input.estimateTxnId
-    ? `<LinkedTxnID>${escapeXml(input.estimateTxnId)}</LinkedTxnID>`
+    ? `<LinkToTxnID>${escapeXml(input.estimateTxnId)}</LinkToTxnID>`
     : "";
   return wrapQbxml(
     version,

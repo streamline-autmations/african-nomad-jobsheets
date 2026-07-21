@@ -129,24 +129,24 @@ describe("buildEstimateAdd", () => {
 });
 
 describe("buildInvoiceAdd", () => {
-  it("includes a LinkedTxnID when an estimate TxnID is provided", () => {
+  it("includes a LinkToTxnID (QBD's real schema element) when an estimate TxnID is provided", () => {
     const xml = buildInvoiceAdd(V, "3", {
       customerName: "Acme",
       itemName: "Job Sheet Line",
       lines: [{ description: "Work", qty: 1, unitCost: 1000 }],
       estimateTxnId: "80000012-1699999999",
     });
-    expect(xml).toContain("<LinkedTxnID>80000012-1699999999</LinkedTxnID>");
+    expect(xml).toContain("<LinkToTxnID>80000012-1699999999</LinkToTxnID>");
     expect(xml).toContain("<InvoiceAddRq requestID=\"3\">");
   });
 
-  it("omits LinkedTxnID when no estimate is linked", () => {
+  it("omits LinkToTxnID when no estimate is linked", () => {
     const xml = buildInvoiceAdd(V, "3", {
       customerName: "Acme",
       itemName: "Job Sheet Line",
       lines: [{ description: "Work", qty: 1, unitCost: 1000 }],
     });
-    expect(xml).not.toContain("<LinkedTxnID>");
+    expect(xml).not.toContain("LinkToTxnID");
   });
 });
 

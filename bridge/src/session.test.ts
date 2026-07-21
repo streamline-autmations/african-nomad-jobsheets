@@ -252,6 +252,105 @@ describe("full session — job costing (Customer:Job + expense Bills)", () => {
     expect(store.jobSheets.get("js5")!.status).toBe("synced");
   });
 
+  it("creates the job under a BRAND NEW customer in the same batch, in the right order", async () => {
+    // Regression test: this is the mainline path for any job sheet converted
+    // from an NSA Quote (customer_id always starts null there) — a new
+    // customer AND a job in the same approve_job_sheet() batch. The job's
+    // existence-check used to run in the prelude, before the customer even
+    // existed yet, so QBD rejected the Estimate with "invalid reference to
+    // QuickBooks Customer". The job-ensure must run after customer_add.
+    const store = new FakeQueueStore([
+      customerRow("js9", "Harmony", "2026-07-21T00:00:00Z"),
+      estimateRow("js9", "Harmony", "2026-07-21T00:00:01Z", "IDK"),
+      billRow("js9", "2026-07-21T00:00:01Z", {
+        supplier_name: "PowerTech Wholesalers",
+        amount: 80000,
+        job_customer_name: "Harmony",
+        job_name: "IDK",
+      }),
+    ]);
+    const manager = new SessionManager(store, config);
+    const responder = makeQbdResponder({
+      existingItems: new Set(["VAT @ 15%", "Job Sheet Line"]),
+      existingVendors: new Set(),
+      existingCustomers: new Set(), // job not found by query -> must be created
+    });
+
+    const result = await runQbwcSession(manager, "an-jobsheets", "secret", responder);
+    const kinds = result.requests.map((r) => /<(\w+Rq) requestID=/.exec(r)?.[1]);
+
+    // CustomerAdd for the parent must come before the job's CustomerQuery —
+    // the reverse order is exactly the bug this test guards against.
+    expect(kinds.indexOf("CustomerAddRq")).toBeLessThan(kinds.lastIndexOf("CustomerQueryRq"));
+    // Vendor/item ensures are unordered prelude steps (independent of
+    // customer/job existence) so they run first; what matters is Harmony's
+    // CustomerAddRq precedes the job's CustomerQueryRq, asserted above.
+    expect(kinds).toEqual([
+      "VendorQueryRq",
+      "VendorAddRq",
+      "ItemQueryRq",
+      "ItemQueryRq",
+      "CustomerAddRq", // Harmony (new customer)
+      "CustomerQueryRq", // Harmony:IDK — not found (parent now exists)
+      "CustomerAddRq", // job created under ParentRef
+      "EstimateAddRq",
+      "BillAddRq",
+    ]);
+
+    const estimateAdd = result.requests.find((r) => r.includes("<EstimateAddRq"))!;
+    expect(estimateAdd).toContain("<CustomerRef><FullName>Harmony:IDK</FullName></CustomerRef>");
+    const billAdd = result.requests.find((r) => r.includes("<BillAddRq"))!;
+    expect(billAdd).toContain(
+      "<CustomerRef><FullName>Harmony:IDK</FullName></CustomerRef>",
+    );
+
+    expect(store.rows.every((r) => r.status === "confirmed")).toBe(true);
+    expect(store.jobSheets.get("js9")!.status).toBe("synced");
+  });
+
+  it("still works when the customer row sorts AFTER its dependents (Postgres ties all rows in one approve_job_sheet() call at the same created_at, so fetch order isn't guaranteed)", async () => {
+    // Real-world failure this reproduces: two Bills failed while the
+    // Estimate and a third Bill succeeded, all for the same brand-new
+    // customer+job, purely because the customer_add row happened to sort
+    // after some of its dependents. Giving the customer row a LATER
+    // timestamp here forces exactly that ordering.
+    const store = new FakeQueueStore([
+      estimateRow("js10", "Rowland", "2026-07-21T00:00:00Z", "Cup a Soup project"),
+      billRow("js10", "2026-07-21T00:00:00Z", {
+        supplier_name: "ABC Printing",
+        amount: 13000,
+        job_customer_name: "Rowland",
+        job_name: "Cup a Soup project",
+      }),
+      customerRow("js10", "Rowland", "2026-07-21T00:00:01Z"), // sorts LAST
+      billRow("js10", "2026-07-21T00:00:01Z", {
+        supplier_name: "Speedy Deliveries",
+        amount: 500,
+        job_customer_name: "Rowland",
+        job_name: "Cup a Soup project",
+      }),
+    ]);
+    const manager = new SessionManager(store, config);
+    const responder = makeQbdResponder({
+      existingItems: new Set(["VAT @ 15%", "Job Sheet Line"]),
+      existingVendors: new Set(),
+      existingCustomers: new Set(),
+    });
+
+    const result = await runQbwcSession(manager, "an-jobsheets", "secret", responder);
+    const kinds = result.requests.map((r) => /<(\w+Rq) requestID=/.exec(r)?.[1]);
+
+    const customerAddForRowland = kinds.indexOf("CustomerAddRq");
+    const firstTransaction = Math.min(
+      kinds.indexOf("EstimateAddRq"),
+      kinds.indexOf("BillAddRq"),
+    );
+    expect(customerAddForRowland).toBeLessThan(firstTransaction);
+
+    expect(store.rows.every((r) => r.status === "confirmed")).toBe(true);
+    expect(store.jobSheets.get("js10")!.status).toBe("synced");
+  });
+
   it("books an expense line as a Bill tagged to the same job, ensuring the vendor exists first", async () => {
     const store = new FakeQueueStore([
       estimateRow("js6", "Harmony", "2026-07-20T00:00:00Z", "Solar Torch Delivery"),
@@ -335,5 +434,80 @@ describe("full session — estimate failure marks the row and job sheet failed",
     expect(estimate.error_message).toContain("invalid reference");
     expect(store.jobSheets.get("js4")!.status).toBe("failed");
     expect(result.close).toContain("error");
+  });
+});
+
+describe("full session — invoice failure never corrupts an already-synced job sheet", () => {
+  // Regression test: create_invoice always converts an already-'synced' job
+  // sheet (see convert_job_sheet_to_invoice()). A failed InvoiceAdd used to
+  // incorrectly flip the whole job sheet to 'failed' — via two different
+  // code paths: the normal case handler, and separately the generic
+  // failStep() catch-all used for unparseable responses. Covers both.
+  // A fresh object per test — FakeQueueStore mutates rows in place, so a
+  // single shared row would leak status/error_message between tests.
+  function invoiceOnlyRow(): QueueRow {
+    return {
+      id: "inv-js8",
+      job_sheet_id: "js8",
+      action: "create_invoice",
+      payload: {
+        customer_name_raw: "Known Customer",
+        client_lines: [{ id: "l1", description: "Work", qty: 1, unitCost: 1000, lineTotal: 1000 }],
+        client_subtotal: 1000,
+        vat_amount: 150,
+        client_total: 1150,
+        estimate_txn_id: "80000099-1",
+      },
+      status: "pending",
+      qbd_txn_id: null,
+      error_message: null,
+      created_at: "2026-07-21T00:00:00Z",
+      synced_at: null,
+    };
+  }
+
+  it("leaves status alone on a normal QBD error response", async () => {
+    const store = new FakeQueueStore([invoiceOnlyRow()]);
+    store.jobSheets.set("js8", { status: "synced", estimateTxnId: "80000099-1" });
+    const manager = new SessionManager(store, config);
+
+    const base = makeQbdResponder({
+      existingItems: new Set(["VAT @ 15%", "Job Sheet Line"]),
+      existingCustomers: new Set(["Known Customer"]),
+    });
+    const responder = (request: string) => {
+      if (request.includes("<InvoiceAddRq")) {
+        const id = /requestID="([^"]*)"/.exec(request)?.[1] ?? "";
+        return `<?xml version="1.0" ?><QBXML><QBXMLMsgsRs>` +
+          `<InvoiceAddRs requestID="${id}" statusCode="3140" statusSeverity="Error" ` +
+          `statusMessage="Something went wrong."></InvoiceAddRs></QBXMLMsgsRs></QBXML>`;
+      }
+      return base(request);
+    };
+
+    await runQbwcSession(manager, "an-jobsheets", "secret", responder);
+
+    expect(store.rows.find((r) => r.action === "create_invoice")!.status).toBe("failed");
+    expect(store.jobSheets.get("js8")!.status).toBe("synced");
+  });
+
+  it("leaves status alone even on an unparseable QBD response (failStep path)", async () => {
+    const store = new FakeQueueStore([invoiceOnlyRow()]);
+    store.jobSheets.set("js8", { status: "synced", estimateTxnId: "80000099-1" });
+    const manager = new SessionManager(store, config);
+
+    const base = makeQbdResponder({
+      existingItems: new Set(["VAT @ 15%", "Job Sheet Line"]),
+      existingCustomers: new Set(["Known Customer"]),
+    });
+    const responder = (request: string) =>
+      request.includes("<InvoiceAddRq") ? "not a qbXML document at all" : base(request);
+
+    await runQbwcSession(manager, "an-jobsheets", "secret", responder);
+
+    const invoice = store.rows.find((r) => r.action === "create_invoice")!;
+    expect(invoice.status).toBe("failed");
+    expect(invoice.error_message).toContain("Unparseable");
+    expect(store.jobSheets.get("js8")!.status).toBe("synced");
   });
 });
