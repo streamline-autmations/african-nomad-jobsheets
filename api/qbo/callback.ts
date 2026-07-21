@@ -5,7 +5,7 @@ import {
   intuitBasicAuthHeader,
   supabaseAdmin,
   htmlPage,
-} from "../_lib/qbo";
+} from "../_lib/qbo.js";
 
 /**
  * OAuth2 redirect URI (set under Keys & OAuth in the Intuit app, not the

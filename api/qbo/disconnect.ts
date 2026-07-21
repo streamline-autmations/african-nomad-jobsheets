@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { INTUIT_REVOKE_URL, intuitBasicAuthHeader, supabaseAdmin, htmlPage } from "../_lib/qbo";
+import { INTUIT_REVOKE_URL, intuitBasicAuthHeader, supabaseAdmin, htmlPage } from "../_lib/qbo.js";
 
 /**
  * Disconnect URL for the Intuit app listing. Called when a company

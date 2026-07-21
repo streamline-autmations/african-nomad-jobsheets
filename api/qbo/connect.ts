@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { INTUIT_AUTHORIZE_URL, QBO_CLIENT_ID, QBO_REDIRECT_URI, QBO_SCOPE, htmlPage } from "../_lib/qbo";
+import { INTUIT_AUTHORIZE_URL, QBO_CLIENT_ID, QBO_REDIRECT_URI, QBO_SCOPE, htmlPage } from "../_lib/qbo.js";
 
 /**
  * Connect/Reconnect URL for the Intuit app listing. Starts the OAuth2

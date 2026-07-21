@@ -1,4 +1,4 @@
-import { INTUIT_TOKEN_URL, intuitBasicAuthHeader, supabaseAdmin } from "./qbo";
+import { INTUIT_TOKEN_URL, intuitBasicAuthHeader, supabaseAdmin } from "./qbo.js";
 
 // Sandbox vs production only changes which QBO API host we call — same
 // OAuth flow, same code path either way. Defaults to sandbox since that's

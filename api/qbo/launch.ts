@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { supabaseAdmin } from "../_lib/qbo";
+import { supabaseAdmin } from "../_lib/qbo.js";
 
 /**
  * Launch URL for the Intuit app listing. Called when a user clicks this

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { supabaseAdmin } from "../_lib/qbo";
-import { createEstimate, createInvoice, type QboLine } from "../_lib/qboApi";
+import { supabaseAdmin } from "../_lib/qbo.js";
+import { createEstimate, createInvoice, type QboLine } from "../_lib/qboApi.js";
 
 interface NsaQuoteLine {
   description: string;
