@@ -9,6 +9,8 @@ export interface BridgeConfig {
   /** 'line' adds a separate VAT line item per estimate; 'none' sends ex-VAT lines only. */
   vatMode: "line" | "none";
   vatItemName: string;
+  /** Item name used for the Sibanye Stillwater discount line (negative rate), when one applies. */
+  discountItemName: string;
   /** Income account for auto-created service items. Must exist in the company file. */
   incomeAccount: string;
   /** Expense account used for BillAdd lines (supplier bills, later phase). */
@@ -19,6 +21,17 @@ export interface BridgeConfig {
    * current trials, so trial -> Pro won't change behaviour.
    */
   qbxmlVersion: string;
+  /**
+   * QuickBooks Desktop always expects "." as the decimal separator in
+   * qbXML, regardless of Windows regional settings — leave this as ".".
+   * If QuickBooks rejects amounts with "There was an error when converting
+   * the price ... in the field ...", the fix is changing the QUICKBOOKS
+   * MACHINE's Windows decimal symbol to "." (Control Panel -> Region ->
+   * Additional settings -> Numbers), not changing this value. Kept
+   * configurable only as an escape hatch if a real-world deployment is ever
+   * found that genuinely needs something else.
+   */
+  decimalSeparator: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
@@ -31,9 +44,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     itemName: env.QBD_ITEM_NAME ?? "Job Sheet Line",
     vatMode: env.QBD_VAT_MODE === "none" ? "none" : "line",
     vatItemName: env.QBD_VAT_ITEM_NAME ?? "VAT @ 15%",
+    discountItemName: env.QBD_DISCOUNT_ITEM_NAME ?? "Sibanye Discount",
     incomeAccount: env.QBD_INCOME_ACCOUNT ?? "Sales",
     expenseAccount: env.QBD_EXPENSE_ACCOUNT ?? "Job Expenses",
     qbxmlVersion: "13.0",
+    decimalSeparator: env.QBD_DECIMAL_SEPARATOR ?? ".",
   };
 }
 

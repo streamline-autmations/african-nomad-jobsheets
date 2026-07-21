@@ -143,19 +143,48 @@ describe("full session — duplicate customer repair", () => {
 });
 
 describe("full session — existing customer, no create_customer row", () => {
-  it("creates the estimate directly against the named customer", async () => {
+  it("ensures the customer exists in QBD (not just Supabase) before creating the estimate", async () => {
+    // Regression test: a customer row can have customer_id set (no
+    // create_customer queued) while never having actually been synced to
+    // QBD — e.g. seeded directly into Supabase. Without the ensure_customer
+    // step, EstimateAdd used to fail with "invalid reference to QuickBooks
+    // Customer" because QBD had no record of it at all.
     const store = new FakeQueueStore([
       estimateRow("js3", "Known Customer", "2026-07-16T00:00:00Z"),
     ]);
     const manager = new SessionManager(store, config);
     const responder = makeQbdResponder({
       existingItems: new Set(["VAT @ 15%", "Job Sheet Line"]),
+      existingCustomers: new Set(), // not found in QBD -> must be auto-created
     });
 
     const result = await runQbwcSession(manager, "an-jobsheets", "secret", responder);
     const kinds = result.requests.map((r) => /<(\w+Rq) requestID=/.exec(r)?.[1]);
-    expect(kinds).toEqual(["ItemQueryRq", "ItemQueryRq", "EstimateAddRq"]);
+    expect(kinds).toEqual([
+      "CustomerQueryRq", // Known Customer — not found
+      "CustomerAddRq", // auto-created
+      "ItemQueryRq",
+      "ItemQueryRq",
+      "EstimateAddRq",
+    ]);
     expect(store.jobSheets.get("js3")!.status).toBe("synced");
+    expect(store.customers).toHaveLength(1);
+  });
+
+  it("skips creating the customer when the query already finds it in QBD", async () => {
+    const store = new FakeQueueStore([
+      estimateRow("js3b", "Already Synced Customer", "2026-07-16T00:00:00Z"),
+    ]);
+    const manager = new SessionManager(store, config);
+    const responder = makeQbdResponder({
+      existingItems: new Set(["VAT @ 15%", "Job Sheet Line"]),
+      existingCustomers: new Set(["Already Synced Customer"]),
+    });
+
+    const result = await runQbwcSession(manager, "an-jobsheets", "secret", responder);
+    const kinds = result.requests.map((r) => /<(\w+Rq) requestID=/.exec(r)?.[1]);
+    expect(kinds).toEqual(["CustomerQueryRq", "ItemQueryRq", "ItemQueryRq", "EstimateAddRq"]);
+    expect(store.jobSheets.get("js3b")!.status).toBe("synced");
   });
 });
 

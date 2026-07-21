@@ -7,6 +7,9 @@ interface LineItemsTableProps {
   lines: LineItemInput[];
   onChange: (lines: LineItemInput[]) => void;
   descriptionSuggestions?: string[];
+  /** Shows a Vendor column and requires it — used for expense lines, which
+   * need a real QuickBooks Vendor to post as a Bill against. */
+  showVendor?: boolean;
 }
 
 function newLine(): LineItemInput {
@@ -23,6 +26,7 @@ export function LineItemsTable({
   lines,
   onChange,
   descriptionSuggestions,
+  showVendor,
 }: LineItemsTableProps) {
   const datalistId = useId();
   const subtotal = round2(
@@ -58,9 +62,13 @@ export function LineItemsTable({
         </datalist>
       )}
 
-      <div className="line-items-table" role="table">
+      <div
+        className={`line-items-table${showVendor ? " line-items-table-with-vendor" : ""}`}
+        role="table"
+      >
         <div className="line-items-row line-items-row-head" role="row">
           <span role="columnheader">Description</span>
+          {showVendor && <span role="columnheader">Vendor</span>}
           <span role="columnheader">Qty</span>
           <span role="columnheader">Unit cost</span>
           <span role="columnheader">Line total</span>
@@ -76,6 +84,14 @@ export function LineItemsTable({
               list={descriptionSuggestions ? datalistId : undefined}
               onChange={(e) => updateLine(line.id, { description: e.target.value })}
             />
+            {showVendor && (
+              <input
+                type="text"
+                value={line.vendorName ?? ""}
+                placeholder="Supplier name"
+                onChange={(e) => updateLine(line.id, { vendorName: e.target.value })}
+              />
+            )}
             <input
               type="number"
               min={0}

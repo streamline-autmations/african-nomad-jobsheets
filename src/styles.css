@@ -147,6 +147,10 @@ body {
   align-items: center;
 }
 
+.line-items-table-with-vendor .line-items-row {
+  grid-template-columns: 1.6fr 1.2fr 0.6fr 1fr 1fr auto;
+}
+
 .line-items-row-head {
   font-size: 0.75rem;
   color: var(--text-muted);
@@ -299,6 +303,208 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.nsa-dockind-toggle {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: -0.5rem;
+}
+
+.nsa-status-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--warning-bg);
+  color: var(--warning);
+  align-self: flex-start;
+}
+
+.nsa-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.nsa-action-row input[type="text"] {
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* ---------------------------------------------------------------------------
+ * NSA Quote/Invoice printable document — deliberately styled to match a real
+ * NSA Mining QuickBooks Online Estimate PDF (Christiaan's reference: "Quote
+ * 1291 from NSA Mining.pdf"), since this is the client-facing document that
+ * gets downloaded and emailed to the mine. Uses the standard SPA print
+ * isolation trick: on screen it renders as a full overlay; on print,
+ * everything else in the app is hidden via visibility (not display) so this
+ * element's own layout/positioning survives into the print output.
+ * ------------------------------------------------------------------------ */
+
+.nsa-doc-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 100;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.nsa-doc-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  max-width: 800px;
+  margin: 0 auto 1rem;
+}
+
+.nsa-quote-print {
+  max-width: 800px;
+  margin: 0 auto;
+  background: #ffffff;
+  color: #1a1a1a;
+  padding: 2.5rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.nsa-doc-header {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto;
+  gap: 1rem;
+  align-items: start;
+  margin-bottom: 1.5rem;
+}
+
+.nsa-doc-title-block h1 {
+  font-size: 1.4rem;
+  margin: 0 0 0.5rem;
+  color: #8a5a2b;
+}
+
+.nsa-doc-logo {
+  max-width: 160px;
+  height: auto;
+}
+
+.nsa-doc-bill-ship {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  background: #f5efe8;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.nsa-doc-address {
+  white-space: pre-line;
+}
+
+.nsa-doc-meta {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid #d8d2c6;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.nsa-doc-meta-right {
+  text-align: right;
+}
+
+.nsa-doc-totals-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.nsa-doc-banking {
+  color: #6b6659;
+}
+
+.nsa-doc-lines {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+.nsa-doc-lines th {
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #6b6659;
+  border-bottom: 1px solid #d8d2c6;
+  padding: 0.4rem;
+}
+
+.nsa-doc-lines td {
+  padding: 0.4rem;
+  border-bottom: 1px solid #eee;
+}
+
+.nsa-doc-lines th:nth-child(n + 2),
+.nsa-doc-lines td:nth-child(n + 2) {
+  text-align: right;
+}
+
+.nsa-doc-totals {
+  margin-left: auto;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.nsa-doc-totals > div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.nsa-doc-total-row {
+  font-weight: bold;
+  border-top: 1px solid #1a1a1a;
+  padding-top: 0.35rem;
+  margin-top: 0.15rem;
+}
+
+.nsa-doc-footer {
+  display: flex;
+  gap: 3rem;
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid #d8d2c6;
+  color: #6b6659;
+}
+
+.nsa-doc-footer-invoice {
+  font-size: 0.85rem;
+  color: #1a1a1a;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .nsa-quote-print,
+  .nsa-quote-print * {
+    visibility: visible;
+  }
+  .nsa-quote-print {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  .no-print {
+    display: none !important;
+  }
 }
 
 @media (max-width: 720px) {

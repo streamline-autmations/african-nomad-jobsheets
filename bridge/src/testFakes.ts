@@ -95,9 +95,16 @@ export class FakeQueueStore implements QueueStore {
 export function makeQbdResponder(options: {
   existingItems?: Set<string>;
   duplicateCustomers?: Set<string>;
+  /**
+   * Gates CustomerQueryRq: names not in this set get a not-found response.
+   * Undefined (the default) preserves the old always-found behaviour so
+   * existing tests that never cared about query realism are unaffected.
+   */
+  existingCustomers?: Set<string>;
 } = {}) {
   const existingItems = options.existingItems ?? new Set<string>();
   const duplicateCustomers = options.duplicateCustomers ?? new Set<string>();
+  const existingCustomers = options.existingCustomers;
   let listSeq = 80000000;
   let txnSeq = 90000000;
 
@@ -146,6 +153,7 @@ export function makeQbdResponder(options: {
             `statusMessage="The name is already in use."></CustomerAddRs>`,
         );
       }
+      existingCustomers?.add(name);
       return wrap(
         `<CustomerAddRs requestID="${id}" statusCode="0" statusSeverity="Info" statusMessage="OK">` +
           `<CustomerRet><ListID>${++listSeq}-1</ListID><Name>${name}</Name></CustomerRet>` +
@@ -155,6 +163,11 @@ export function makeQbdResponder(options: {
 
     if (request.includes("<CustomerQueryRq")) {
       const name = fullName(request);
+      if (existingCustomers && !existingCustomers.has(name)) {
+        return wrap(
+          `<CustomerQueryRs requestID="${id}" statusCode="500" statusSeverity="Info" statusMessage="Not found."></CustomerQueryRs>`,
+        );
+      }
       return wrap(
         `<CustomerQueryRs requestID="${id}" statusCode="0" statusSeverity="Info" statusMessage="OK">` +
           `<CustomerRet><ListID>${++listSeq}-1</ListID><Name>${name}</Name></CustomerRet>` +

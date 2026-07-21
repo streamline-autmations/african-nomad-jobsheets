@@ -32,13 +32,13 @@ type JobSheetRow = {
   client_lines: LineItem[];
   expense_lines: LineItem[];
   client_subtotal: number;
+  sibanye_discount: number;
   vat_amount: number;
   client_total: number;
   expense_total: number;
   gross_profit: number;
   profit_margin_pct: number;
   nsa_fee: number;
-  sibanye_fee: number;
   tuscany_fee: number;
   total_fees: number;
   net_profit: number;
@@ -62,13 +62,13 @@ function toJobSheet(row: JobSheetRow): JobSheet {
     clientLines: row.client_lines ?? [],
     expenseLines: row.expense_lines ?? [],
     clientSubtotal: Number(row.client_subtotal),
+    sibanyeDiscount: Number(row.sibanye_discount),
     vatAmount: Number(row.vat_amount),
     clientTotal: Number(row.client_total),
     expenseTotal: Number(row.expense_total),
     grossProfit: Number(row.gross_profit),
     profitMarginPct: Number(row.profit_margin_pct),
     nsaFee: Number(row.nsa_fee),
-    sibanyeFee: Number(row.sibanye_fee),
     tuscanyFee: Number(row.tuscany_fee),
     totalFees: Number(row.total_fees),
     netProfit: Number(row.net_profit),
@@ -154,13 +154,13 @@ export interface SaveJobSheetDraftInput {
 function financialsToRow(financials: JobSheetFinancials) {
   return {
     client_subtotal: financials.clientSubtotal,
+    sibanye_discount: financials.sibanyeDiscount,
     vat_amount: financials.vatAmount,
     client_total: financials.clientTotal,
     expense_total: financials.expenseTotal,
     gross_profit: financials.grossProfit,
     profit_margin_pct: financials.profitMarginPct,
     nsa_fee: financials.nsaFee,
-    sibanye_fee: financials.sibanyeFee,
     tuscany_fee: financials.tuscanyFee,
     total_fees: financials.totalFees,
     net_profit: financials.netProfit,

@@ -75,6 +75,12 @@ export function ApprovalView() {
           {selected.eventDate && <p>Event date: {selected.eventDate}</p>}
 
           <div className="financial-grid">
+            {selected.sibanyeDiscount > 0 && (
+              <>
+                <span>Sibanye discount (2.5%)</span>
+                <strong>- R {selected.sibanyeDiscount.toFixed(2)}</strong>
+              </>
+            )}
             <span>Client total (incl. VAT)</span>
             <strong>R {selected.clientTotal.toFixed(2)}</strong>
             <span>Expense total</span>
@@ -86,7 +92,7 @@ export function ApprovalView() {
               {selected.profitMarginPct.toFixed(1)}%
               {selected.belowMarginTarget && " ⚠ below 20% target"}
             </strong>
-            <span>Total fees (NSA/Sibanye/Tuscany)</span>
+            <span>Total fees (NSA/Tuscany)</span>
             <strong>R {selected.totalFees.toFixed(2)}</strong>
             <span>Net profit</span>
             <strong>R {selected.netProfit.toFixed(2)}</strong>

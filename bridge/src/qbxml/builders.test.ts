@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   buildCustomerAdd,
   buildEstimateAdd,
@@ -6,7 +6,7 @@ import {
   buildItemServiceAdd,
   buildBillAdd,
 } from "./builders";
-import { qbdName } from "./xml";
+import { qbdAmount, qbdName, qbdQuantity, setQbdDecimalSeparator } from "./xml";
 
 const V = "13.0";
 
@@ -14,6 +14,21 @@ describe("qbdName", () => {
   it("caps names at 41 chars and replaces the QBD list separator", () => {
     expect(qbdName("A".repeat(50)).length).toBe(41);
     expect(qbdName("Parent:Child")).toBe("Parent-Child");
+  });
+});
+
+describe("qbdAmount / qbdQuantity decimal separator", () => {
+  afterEach(() => setQbdDecimalSeparator(".")); // don't leak into other tests
+
+  it("defaults to a period", () => {
+    expect(qbdAmount(600)).toBe("600.00");
+    expect(qbdQuantity(1.5)).toBe("1.5");
+  });
+
+  it("switches to a comma when configured — QBD on an en-ZA machine rejects '600.00' otherwise", () => {
+    setQbdDecimalSeparator(",");
+    expect(qbdAmount(600)).toBe("600,00");
+    expect(qbdQuantity(1.5)).toBe("1,5");
   });
 });
 
@@ -72,6 +87,21 @@ describe("buildEstimateAdd", () => {
       lines: [{ description: "Work", qty: 1, unitCost: 1000 }],
     });
     expect(xml).not.toContain("<Memo>");
+  });
+
+  it("appends a negative-rate discount line before the VAT line when a discountLine is supplied", () => {
+    const xml = buildEstimateAdd(V, "2", {
+      customerName: "Sibanye Stillwater",
+      itemName: "Job Sheet Line",
+      lines: [{ description: "Catering", qty: 1, unitCost: 10000 }],
+      discountLine: { itemName: "Sibanye Discount", amount: 250 },
+      vatLine: { itemName: "VAT @ 15%", amount: 1462.5 },
+    });
+    expect((xml.match(/<EstimateLineAdd>/g) ?? []).length).toBe(3);
+    expect(xml).toContain("<ItemRef><FullName>Sibanye Discount</FullName></ItemRef>");
+    expect(xml).toContain("<Rate>-250.00</Rate>");
+    // discount line must precede the VAT line so VAT reads as computed on the discounted amount
+    expect(xml.indexOf("Sibanye Discount")).toBeLessThan(xml.indexOf("VAT @ 15%"));
   });
 });
 

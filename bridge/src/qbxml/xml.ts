@@ -25,17 +25,41 @@ export function qbdName(value: string): string {
   return cleanText(value).replace(/:/g, "-").slice(0, 41).trim();
 }
 
+/**
+ * Joins a Customer and Job name into QBD's "Customer:Job" hierarchical
+ * FullName — the colon here is intentional (it's QBD's own separator), so
+ * each segment is sanitised through qbdName() individually rather than
+ * qbdName()-ing the joined string, which would strip the colon we need.
+ */
+export function qbdJobFullName(customerName: string, jobName: string): string {
+  return `${qbdName(customerName)}:${qbdName(jobName)}`;
+}
+
 /** Transaction line descriptions / memos: QBD caps Desc at 4095 chars. */
 export function qbdDesc(value: string): string {
   return cleanText(value).slice(0, 4095);
 }
 
+// QBD always wants "." (see BridgeConfig.decimalSeparator for why this is
+// configurable at all) — set once at startup from config, defaults to "."
+// so these functions' output stays stable in tests that never call the setter.
+let decimalSeparator = ".";
+
+/** Called once at bridge startup from loadConfig(); see BridgeConfig.decimalSeparator. */
+export function setQbdDecimalSeparator(separator: string): void {
+  decimalSeparator = separator || ".";
+}
+
+function withLocaleDecimal(fixed: string): string {
+  return decimalSeparator === "." ? fixed : fixed.replace(".", decimalSeparator);
+}
+
 /** Money as QBD expects it: plain decimal, two places, no thousands separators. */
 export function qbdAmount(value: number): string {
-  return (Math.round((value + Number.EPSILON) * 100) / 100).toFixed(2);
+  return withLocaleDecimal((Math.round((value + Number.EPSILON) * 100) / 100).toFixed(2));
 }
 
 /** Quantities: up to 5 decimal places, trailing zeros trimmed. */
 export function qbdQuantity(value: number): string {
-  return String(Number(value.toFixed(5)));
+  return withLocaleDecimal(String(Number(value.toFixed(5))));
 }

@@ -30,6 +30,8 @@ export interface QueueRow {
     event_date?: string | null;
     client_lines?: PayloadLine[];
     client_subtotal?: number;
+    /** Sibanye Stillwater's 2.5% invoice discount, when it applies. Added as its own line. */
+    discount_amount?: number;
     vat_amount?: number;
     client_total?: number;
     estimate_txn_id?: string;

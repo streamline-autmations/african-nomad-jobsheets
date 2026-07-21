@@ -23,6 +23,8 @@ import { qbdName } from "./qbxml/xml";
 type Step =
   | { kind: "ensure_item"; itemName: string }
   | { kind: "item_service_add"; itemName: string }
+  | { kind: "ensure_customer"; name: string }
+  | { kind: "ensure_customer_add"; name: string }
   | { kind: "customer_add"; queueRowId: string; jobSheetId: string; name: string }
   | { kind: "customer_query"; queueRowId: string; jobSheetId: string; name: string }
   | {
@@ -32,6 +34,7 @@ type Step =
       customerName: string;
       memo?: string;
       lines: EstimateLineInput[];
+      discountAmount: number;
       vatAmount: number;
     }
   | {
@@ -41,6 +44,7 @@ type Step =
       customerName: string;
       memo?: string;
       lines: EstimateLineInput[];
+      discountAmount: number;
       vatAmount: number;
       estimateTxnId?: string;
     }
@@ -138,6 +142,25 @@ export class SessionManager {
     const steps: Step[] = [];
     let needsServiceItem = false;
     let needsVatItem = false;
+    let needsDiscountItem = false;
+
+    // Customers already getting an explicit create_customer step this batch
+    // don't need a separate existence check — that step (and its
+    // duplicate-name repair branch) already guarantees they exist by the
+    // time any estimate/invoice referencing them runs.
+    const customersBeingCreated = new Set<string>();
+    for (const row of rows) {
+      if (row.action === "create_customer") {
+        customersBeingCreated.add(qbdName(row.payload.name ?? row.payload.customer_name_raw ?? ""));
+      }
+    }
+    // Customers referenced by an estimate/invoice can also arrive with
+    // customer_id already set (e.g. picked from a Supabase customers row
+    // that was seeded directly, never through the app's "new customer" flow)
+    // while having no matching QBD record — approve_job_sheet only queues
+    // create_customer when customer_id is null, so that case is otherwise
+    // silently missed. Query-then-create for every such name, deduped.
+    const customersToEnsure = new Set<string>();
 
     for (const row of rows) {
       switch (row.action) {
@@ -149,33 +172,43 @@ export class SessionManager {
             name: qbdName(row.payload.name ?? row.payload.customer_name_raw ?? ""),
           });
           break;
-        case "create_estimate":
+        case "create_estimate": {
           needsServiceItem = true;
           if (this.config.vatMode === "line") needsVatItem = true;
+          if ((row.payload.discount_amount ?? 0) > 0) needsDiscountItem = true;
+          const customerName = qbdName(row.payload.customer_name_raw ?? "");
+          if (!customersBeingCreated.has(customerName)) customersToEnsure.add(customerName);
           steps.push({
             kind: "estimate_add",
             queueRowId: row.id,
             jobSheetId: row.job_sheet_id,
-            customerName: qbdName(row.payload.customer_name_raw ?? ""),
+            customerName,
             memo: row.payload.job_description || undefined,
             lines: toEstimateLines(row.payload.client_lines),
+            discountAmount: row.payload.discount_amount ?? 0,
             vatAmount: row.payload.vat_amount ?? 0,
           });
           break;
-        case "create_invoice":
+        }
+        case "create_invoice": {
           needsServiceItem = true;
           if (this.config.vatMode === "line") needsVatItem = true;
+          if ((row.payload.discount_amount ?? 0) > 0) needsDiscountItem = true;
+          const customerName = qbdName(row.payload.customer_name_raw ?? "");
+          if (!customersBeingCreated.has(customerName)) customersToEnsure.add(customerName);
           steps.push({
             kind: "invoice_add",
             queueRowId: row.id,
             jobSheetId: row.job_sheet_id,
-            customerName: qbdName(row.payload.customer_name_raw ?? ""),
+            customerName,
             memo: row.payload.job_description || undefined,
             lines: toEstimateLines(row.payload.client_lines),
+            discountAmount: row.payload.discount_amount ?? 0,
             vatAmount: row.payload.vat_amount ?? 0,
             estimateTxnId: row.payload.estimate_txn_id,
           });
           break;
+        }
         case "create_bill":
           steps.push({
             kind: "bill_add",
@@ -189,11 +222,17 @@ export class SessionManager {
       }
     }
 
-    // Service items must exist before any transaction references them, so
-    // ensure-item steps go at the very front of the plan.
+    // Customers and service items must exist before any transaction
+    // references them, so ensure-steps go at the very front of the plan.
     const prelude: Step[] = [];
+    for (const name of customersToEnsure) {
+      prelude.push({ kind: "ensure_customer", name });
+    }
     if (needsVatItem) {
       prelude.push({ kind: "ensure_item", itemName: this.config.vatItemName });
+    }
+    if (needsDiscountItem) {
+      prelude.push({ kind: "ensure_item", itemName: this.config.discountItemName });
     }
     if (needsServiceItem) {
       prelude.push({ kind: "ensure_item", itemName: this.config.itemName });
@@ -217,6 +256,10 @@ export class SessionManager {
         return buildItemQuery(v, requestId, step.itemName);
       case "item_service_add":
         return buildItemServiceAdd(v, requestId, step.itemName, this.config.incomeAccount);
+      case "ensure_customer":
+        return buildCustomerQuery(v, requestId, step.name);
+      case "ensure_customer_add":
+        return buildCustomerAdd(v, requestId, step.name);
       case "customer_add":
         return buildCustomerAdd(v, requestId, step.name);
       case "customer_query":
@@ -227,6 +270,10 @@ export class SessionManager {
           memo: step.memo,
           lines: step.lines,
           itemName: this.config.itemName,
+          discountLine:
+            step.discountAmount > 0
+              ? { itemName: this.config.discountItemName, amount: step.discountAmount }
+              : undefined,
           vatLine:
             this.config.vatMode === "line" && step.vatAmount > 0
               ? { itemName: this.config.vatItemName, amount: step.vatAmount }
@@ -239,6 +286,10 @@ export class SessionManager {
           lines: step.lines,
           itemName: this.config.itemName,
           estimateTxnId: step.estimateTxnId,
+          discountLine:
+            step.discountAmount > 0
+              ? { itemName: this.config.discountItemName, amount: step.discountAmount }
+              : undefined,
           vatLine:
             this.config.vatMode === "line" && step.vatAmount > 0
               ? { itemName: this.config.vatItemName, amount: step.vatAmount }
@@ -298,6 +349,35 @@ export class SessionManager {
           return this.advance(session, true);
         }
         session.errors.push(`Could not create item "${step.itemName}": ${response.statusMessage}`);
+        return this.advance(session, false);
+      }
+
+      case "ensure_customer": {
+        if (ok && response.listId) {
+          await this.store.upsertCustomerMirror(step.name, response.listId);
+          return this.advance(session, true);
+        }
+        // Not found by exact FullName -> create it. If it genuinely exists
+        // (race with another session), the add below returns 3100, also
+        // treated as success — the estimate/invoice only needs it to exist.
+        session.steps.splice(session.index + 1, 0, {
+          kind: "ensure_customer_add",
+          name: step.name,
+        });
+        return this.advance(session, true);
+      }
+
+      case "ensure_customer_add": {
+        if (ok && response.listId) {
+          await this.store.upsertCustomerMirror(step.name, response.listId);
+          return this.advance(session, true);
+        }
+        if (response.statusCode === QBD_STATUS.DUPLICATE_NAME) {
+          return this.advance(session, true);
+        }
+        session.errors.push(
+          `Could not ensure customer "${step.name}" exists in QBD: ${response.statusMessage}`,
+        );
         return this.advance(session, false);
       }
 

@@ -30,6 +30,8 @@ export interface LineItemInput {
   description: string;
   qty: number;
   unitCost: number;
+  /** Supplier this expense is owed to — expense lines only, unused on client lines. */
+  vendorName?: string;
 }
 
 // A line item with its computed total — this is the shape persisted into
@@ -40,13 +42,13 @@ export interface LineItem extends LineItemInput {
 
 export interface JobSheetFinancials {
   clientSubtotal: number;
+  sibanyeDiscount: number;
   vatAmount: number;
   clientTotal: number;
   expenseTotal: number;
   grossProfit: number;
   profitMarginPct: number;
   nsaFee: number;
-  sibanyeFee: number;
   tuscanyFee: number;
   totalFees: number;
   netProfit: number;

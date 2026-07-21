@@ -3,6 +3,7 @@ import { loadConfig, configProblems } from "./config";
 import { SessionManager } from "./session";
 import { SupabaseQueueStore } from "./supabaseStore";
 import { createApp } from "./app";
+import { setQbdDecimalSeparator } from "./qbxml/xml";
 
 const config = loadConfig();
 const problems = configProblems(config);
@@ -13,6 +14,8 @@ if (problems.length > 0) {
   for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }
+
+setQbdDecimalSeparator(config.decimalSeparator);
 
 const store = new SupabaseQueueStore(config);
 const manager = new SessionManager(store, config);

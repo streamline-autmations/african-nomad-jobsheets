@@ -20,11 +20,25 @@ function wrapQbxml(version: string, body: string): string {
   );
 }
 
-export function buildCustomerAdd(version: string, requestId: string, name: string): string {
+/**
+ * `name` is just this level's own segment (e.g. a job's own name, not the
+ * full "Customer:Job" path) — QBD requires Name to be the leaf segment, with
+ * the parent given separately via ParentRef when this is a Job under a
+ * Customer.
+ */
+export function buildCustomerAdd(
+  version: string,
+  requestId: string,
+  name: string,
+  parentName?: string,
+): string {
+  const parentRef = parentName
+    ? `<ParentRef><FullName>${escapeXml(qbdName(parentName))}</FullName></ParentRef>`
+    : "";
   return wrapQbxml(
     version,
     `<CustomerAddRq requestID="${escapeXml(requestId)}">` +
-      `<CustomerAdd><Name>${escapeXml(qbdName(name))}</Name></CustomerAdd>` +
+      `<CustomerAdd><Name>${escapeXml(qbdName(name))}</Name>${parentRef}</CustomerAdd>` +
       `</CustomerAddRq>`,
   );
 }
@@ -85,6 +99,8 @@ export interface EstimateAddInput {
   itemName: string;
   /** When set, appended as an extra line so the estimate total includes VAT. */
   vatLine?: { itemName: string; amount: number };
+  /** Sibanye Stillwater's 2.5% discount, when it applies — a negative-rate line so the total reflects it. */
+  discountLine?: { itemName: string; amount: number };
 }
 
 function salesLinesXml(lineTag: string, input: EstimateAddInput): string {
@@ -100,6 +116,15 @@ function salesLinesXml(lineTag: string, input: EstimateAddInput): string {
     )
     .join("");
 
+  const discount = input.discountLine
+    ? `<${lineTag}>` +
+      `<ItemRef><FullName>${escapeXml(qbdName(input.discountLine.itemName))}</FullName></ItemRef>` +
+      `<Desc>Sibanye Stillwater 2.5% discount</Desc>` +
+      `<Quantity>1</Quantity>` +
+      `<Rate>${qbdAmount(-input.discountLine.amount)}</Rate>` +
+      `</${lineTag}>`
+    : "";
+
   const vat = input.vatLine
     ? `<${lineTag}>` +
       `<ItemRef><FullName>${escapeXml(qbdName(input.vatLine.itemName))}</FullName></ItemRef>` +
@@ -109,7 +134,7 @@ function salesLinesXml(lineTag: string, input: EstimateAddInput): string {
       `</${lineTag}>`
     : "";
 
-  return lines + vat;
+  return lines + discount + vat;
 }
 
 export function buildEstimateAdd(
@@ -168,10 +193,21 @@ export interface BillAddInput {
   amount: number;
   memo?: string;
   expenseAccount: string;
+  /**
+   * Full "Customer:Job" name (already built via qbdJobFullName), when this
+   * expense should be tagged against a job for QuickBooks' Job Profitability
+   * report. Applied per-line (QBD tracks job-costing per ExpenseLineAdd, not
+   * per Bill), not re-sanitised here since the caller already produced a
+   * valid FullName.
+   */
+  customerJobRef?: string;
 }
 
 export function buildBillAdd(version: string, requestId: string, input: BillAddInput): string {
   const memo = input.memo ? `<Memo>${escapeXml(qbdDesc(input.memo))}</Memo>` : "";
+  const customerRef = input.customerJobRef
+    ? `<CustomerRef><FullName>${escapeXml(input.customerJobRef)}</FullName></CustomerRef>`
+    : "";
   return wrapQbxml(
     version,
     `<BillAddRq requestID="${escapeXml(requestId)}">` +
@@ -181,6 +217,7 @@ export function buildBillAdd(version: string, requestId: string, input: BillAddI
       `<ExpenseLineAdd>` +
       `<AccountRef><FullName>${escapeXml(input.expenseAccount)}</FullName></AccountRef>` +
       `<Amount>${qbdAmount(input.amount)}</Amount>` +
+      customerRef +
       `</ExpenseLineAdd>` +
       `</BillAdd>` +
       `</BillAddRq>`,

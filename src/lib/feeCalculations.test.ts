@@ -51,7 +51,7 @@ describe("calculateJobSheetFinancials — African Nomad", () => {
     expect(result.profitMarginPct).toBe(60);
 
     expect(result.nsaFee).toBe(600); // 6000 * 10%
-    expect(result.sibanyeFee).toBe(0);
+    expect(result.sibanyeDiscount).toBe(0);
     expect(result.tuscanyFee).toBe(0);
     expect(result.totalFees).toBe(600);
     expect(result.netProfit).toBe(5400); // 6000 - 600
@@ -59,7 +59,7 @@ describe("calculateJobSheetFinancials — African Nomad", () => {
     expect(result.belowMarginTarget).toBe(false);
   });
 
-  it("adds the extra 2.5% Sibanye fee on top of the 10% NSA fee", () => {
+  it("discounts Sibanye's invoice 2.5% before VAT, which flows through to profit and the 10% NSA fee", () => {
     const result = calculateJobSheetFinancials({
       companyName: "African Nomad",
       customerName: "Sibanye Stillwater",
@@ -67,13 +67,18 @@ describe("calculateJobSheetFinancials — African Nomad", () => {
       expenseLines: [line("Food cost", 1, 4000)],
     });
 
-    expect(result.grossProfit).toBe(6000);
-    expect(result.nsaFee).toBe(600); // 6000 * 10%
-    expect(result.sibanyeFee).toBe(150); // 6000 * 2.5%
+    // clientSubtotal 10000, discount 250, discounted subtotal 9750
+    // VAT 1462.50, clientTotal 11212.50
+    expect(result.clientSubtotal).toBe(10000);
+    expect(result.sibanyeDiscount).toBe(250); // 10000 * 2.5%
+    expect(result.vatAmount).toBe(1462.5);
+    expect(result.clientTotal).toBe(11212.5);
+
+    expect(result.grossProfit).toBe(5750); // 9750 - 4000
+    expect(result.nsaFee).toBe(575); // 5750 * 10%
     expect(result.tuscanyFee).toBe(0);
-    expect(result.totalFees).toBe(750); // combined 12.5%
-    expect(result.netProfit).toBe(5250); // 6000 - 750
-    expect(result.netMarginPct).toBe(52.5);
+    expect(result.totalFees).toBe(575);
+    expect(result.netProfit).toBe(5175); // 5750 - 575
   });
 
   it("matches the Sibanye customer name case-insensitively and trims whitespace", () => {
@@ -84,10 +89,21 @@ describe("calculateJobSheetFinancials — African Nomad", () => {
       expenseLines: [],
     });
 
-    expect(result.sibanyeFee).toBeGreaterThan(0);
+    expect(result.sibanyeDiscount).toBeGreaterThan(0);
   });
 
-  it("does not apply the Sibanye fee to a customer with a similar but different name", () => {
+  it("applies the Sibanye discount to a mine/site customer under the Sibanye Stillwater name", () => {
+    const result = calculateJobSheetFinancials({
+      companyName: "African Nomad",
+      customerName: "Sibanye Stillwater East 3",
+      clientLines: [line("Catering", 1, 10000)],
+      expenseLines: [],
+    });
+
+    expect(result.sibanyeDiscount).toBe(250); // 10000 * 2.5%
+  });
+
+  it("does not apply the Sibanye discount to a customer with a similar but different name", () => {
     const result = calculateJobSheetFinancials({
       companyName: "African Nomad",
       customerName: "Sibanye Platinum",
@@ -95,12 +111,13 @@ describe("calculateJobSheetFinancials — African Nomad", () => {
       expenseLines: [],
     });
 
-    expect(result.sibanyeFee).toBe(0);
+    expect(result.sibanyeDiscount).toBe(0);
   });
+
 });
 
 describe("calculateJobSheetFinancials — Tuscany SA", () => {
-  it("charges only the 10% silent-partner fee, never NSA or Sibanye fees", () => {
+  it("charges only the 10% silent-partner fee, never NSA fees or the Sibanye discount", () => {
     const result = calculateJobSheetFinancials({
       companyName: "Tuscany SA",
       customerName: "Any Customer",
@@ -111,12 +128,12 @@ describe("calculateJobSheetFinancials — Tuscany SA", () => {
     expect(result.grossProfit).toBe(5000);
     expect(result.tuscanyFee).toBe(500); // 5000 * 10%
     expect(result.nsaFee).toBe(0);
-    expect(result.sibanyeFee).toBe(0);
+    expect(result.sibanyeDiscount).toBe(0);
     expect(result.totalFees).toBe(500);
     expect(result.netProfit).toBe(4500);
   });
 
-  it("never applies the Sibanye extra fee under Tuscany SA, even for that customer", () => {
+  it("never applies the Sibanye discount under Tuscany SA, even for that customer", () => {
     const result = calculateJobSheetFinancials({
       companyName: "Tuscany SA",
       customerName: "Sibanye Stillwater",
@@ -124,7 +141,7 @@ describe("calculateJobSheetFinancials — Tuscany SA", () => {
       expenseLines: [],
     });
 
-    expect(result.sibanyeFee).toBe(0);
+    expect(result.sibanyeDiscount).toBe(0);
     expect(result.tuscanyFee).toBe(800); // 8000 * 10%
   });
 });
@@ -193,7 +210,7 @@ describe("calculateJobSheetFinancials — edge cases", () => {
     });
 
     expect(result.nsaFee).toBe(0);
-    expect(result.sibanyeFee).toBe(0);
+    expect(result.sibanyeDiscount).toBe(0);
     expect(result.tuscanyFee).toBe(0);
     expect(result.totalFees).toBe(0);
     expect(result.netProfit).toBe(result.grossProfit);

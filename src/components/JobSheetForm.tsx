@@ -173,6 +173,7 @@ export function JobSheetForm() {
         lines={expenseLines}
         onChange={setExpenseLines}
         descriptionSuggestions={commonExpenses.map((e) => e.label)}
+        showVendor
       />
 
       <div className="financial-summary">
@@ -180,6 +181,13 @@ export function JobSheetForm() {
         <div className="financial-grid">
           <span>Client subtotal</span>
           <strong>R {financials.clientSubtotal.toFixed(2)}</strong>
+
+          {financials.sibanyeDiscount > 0 && (
+            <>
+              <span>Sibanye discount (2.5%)</span>
+              <strong>- R {financials.sibanyeDiscount.toFixed(2)}</strong>
+            </>
+          )}
 
           <span>VAT (15%)</span>
           <strong>R {financials.vatAmount.toFixed(2)}</strong>
@@ -205,12 +213,6 @@ export function JobSheetForm() {
             <>
               <span>NSA fee (10%)</span>
               <strong>R {financials.nsaFee.toFixed(2)}</strong>
-              {financials.sibanyeFee > 0 && (
-                <>
-                  <span>Sibanye extra fee (2.5%)</span>
-                  <strong>R {financials.sibanyeFee.toFixed(2)}</strong>
-                </>
-              )}
             </>
           )}
           {selectedCompany?.name === "Tuscany SA" && (

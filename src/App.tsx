@@ -1,12 +1,17 @@
 import { useState } from "react";
 import { JobSheetForm } from "./components/JobSheetForm";
 import { ApprovalView } from "./components/ApprovalView";
+import { NsaQuoteForm } from "./components/NsaQuoteForm";
+import { NsaQuoteList } from "./components/NsaQuoteList";
 import { supabaseConfigured } from "./lib/supabase";
 
-type Tab = "new" | "approvals";
+type Tab = "new" | "approvals" | "nsa-new" | "nsa-quotes";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("new");
+  // Bumped after saving a new NSA quote so NsaQuoteList refetches when the
+  // user switches to it, without the two components needing to share state.
+  const [nsaQuoteListKey, setNsaQuoteListKey] = useState(0);
 
   return (
     <div className="app-shell">
@@ -27,6 +32,20 @@ export default function App() {
           >
             Approvals
           </button>
+          <button
+            type="button"
+            className={tab === "nsa-new" ? "active" : ""}
+            onClick={() => setTab("nsa-new")}
+          >
+            New NSA Quote
+          </button>
+          <button
+            type="button"
+            className={tab === "nsa-quotes" ? "active" : ""}
+            onClick={() => setTab("nsa-quotes")}
+          >
+            NSA Quotes
+          </button>
         </nav>
       </header>
 
@@ -37,7 +56,17 @@ export default function App() {
             VITE_SUPABASE_ANON_KEY in your .env.local.
           </div>
         )}
-        {tab === "new" ? <JobSheetForm /> : <ApprovalView />}
+        {tab === "new" && <JobSheetForm />}
+        {tab === "approvals" && <ApprovalView />}
+        {tab === "nsa-new" && (
+          <NsaQuoteForm
+            onSaved={() => {
+              setNsaQuoteListKey((k) => k + 1);
+              setTab("nsa-quotes");
+            }}
+          />
+        )}
+        {tab === "nsa-quotes" && <NsaQuoteList key={nsaQuoteListKey} />}
       </main>
     </div>
   );
