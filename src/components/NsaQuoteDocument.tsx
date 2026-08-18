@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
+import { round2 } from "../lib/feeCalculations";
 import { NSA_COMPANY } from "../lib/nsaCompany";
 import { downloadElementAsPdf } from "../lib/pdfDownload";
 import type { NsaQuote } from "../nsaTypes";
 import nsaLogo from "../assets/nsa-mining-logo.jpg";
+import { errorMessage } from "../lib/errors";
 
 interface NsaQuoteDocumentProps {
   quote: NsaQuote;
@@ -49,7 +51,7 @@ export function NsaQuoteDocument({ quote, docType, onClose }: NsaQuoteDocumentPr
         `${title === "INVOICE" ? "Invoice" : "Quote"}-${safeNumber}-${safeClient}.pdf`,
       );
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : String(err));
+      setDownloadError(errorMessage(err));
     } finally {
       setDownloading(false);
     }
@@ -164,8 +166,19 @@ export function NsaQuoteDocument({ quote, docType, onClose }: NsaQuoteDocumentPr
               <span>Subtotal</span>
               <span>{formatMoney(quote.subtotal)}</span>
             </div>
+            {quote.discountAmount > 0 && (
+              <div>
+                <span>Discount</span>
+                <span>- {formatMoney(quote.discountAmount)}</span>
+              </div>
+            )}
             <div>
-              <span>VAT @ 15% on {formatMoney(quote.subtotal)}</span>
+              {/* VAT is charged on the discounted amount, so the base named
+                  here must be the discounted subtotal — not quote.subtotal,
+                  which would misstate the calculation on a discounted quote. */}
+              <span>
+                VAT @ 15% on {formatMoney(round2(quote.subtotal - quote.discountAmount))}
+              </span>
               <span>{formatMoney(quote.vatAmount)}</span>
             </div>
             <div className="nsa-doc-total-row">

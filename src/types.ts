@@ -78,6 +78,12 @@ export interface JobSheet extends JobSheetFinancials {
   expenseLines: LineItem[];
   qbdEstimateTxnId: string | null;
   qbdInvoiceTxnId: string | null;
+  /**
+   * Set once this job sheet has been turned into a client-facing NSA quote.
+   * The reciprocal of NsaQuote.anJobSheetId — one records each direction of
+   * the hand-off, and both exist because a job can start from either end.
+   */
+  nsaQuoteId: string | null;
   createdAt: string;
   approvedAt: string | null;
   syncedAt: string | null;

@@ -17,6 +17,8 @@ import {
   saveJobSheetDraft,
 } from "../lib/jobSheets";
 import type { CommonExpense, Company, Customer } from "../types";
+import { errorMessage } from "../lib/errors";
+import { SpotBidCheck } from "./SpotBidCheck";
 
 interface JobSheetFormProps {
   /** When set, loads that existing draft for editing instead of starting blank
@@ -61,7 +63,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : String(err));
+        setLoadError(errorMessage(err));
       });
     return () => {
       cancelled = true;
@@ -86,7 +88,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : String(err));
+        setLoadError(errorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setLoadingExisting(false);
@@ -160,7 +162,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
         resetForm();
       }
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
+      setSaveError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -297,6 +299,8 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
           </div>
         </div>
       </div>
+
+      <SpotBidCheck expenseTotal={financials.expenseTotal} />
 
       {saveError && <div className="banner banner-error">{saveError}</div>}
       {saveMessage && <div className="banner banner-success">{saveMessage}</div>}

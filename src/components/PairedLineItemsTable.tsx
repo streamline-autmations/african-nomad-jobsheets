@@ -1,5 +1,6 @@
-import { useId } from "react";
-import { round2 } from "../lib/feeCalculations";
+import { useId, useState } from "react";
+import { MARGIN_TARGET_PCT, exclVat, inclVat, round2 } from "../lib/feeCalculations";
+import { marginPctFromTotals, repriceRowToMargin } from "../lib/markup";
 import { emptyPairedRow, type PairedRow } from "../lib/pairedLineItems";
 
 interface PairedLineItemsTableProps {
@@ -17,10 +18,34 @@ export function PairedLineItemsTable({
   descriptionSuggestions,
 }: PairedLineItemsTableProps) {
   const datalistId = useId();
+  const bulkMarginId = useId();
+  // Held as a string so the field can be empty or mid-typing ("2", "2.") without
+  // snapping back to a number on every keystroke.
+  const [bulkMargin, setBulkMargin] = useState(String(MARGIN_TARGET_PCT));
 
   function updateRow(id: string, patch: Partial<PairedRow>) {
     onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
+
+  // Prices a line backwards from a target margin instead of forwards from a
+  // price — the fast path when a mine wants a number now and the supplier
+  // cost is the only thing actually known.
+  function repriceRow(id: string, marginPct: number) {
+    onChange(rows.map((r) => (r.id === id ? repriceRowToMargin(r, marginPct) : r)));
+  }
+
+  function repriceAll() {
+    const marginPct = Number(bulkMargin);
+    if (!Number.isFinite(marginPct)) return;
+    onChange(rows.map((r) => repriceRowToMargin(r, marginPct)));
+  }
+
+  // Rows repriceRowToMargin would decline to touch (no cost, or no client qty).
+  // Counted so "apply to all" can say what it skipped instead of silently
+  // leaving lines at whatever was typed.
+  const skippedByReprice = rows.filter(
+    (r) => r.clientQty <= 0 || round2(r.supplierQty * r.supplierUnitCost) <= 0,
+  ).length;
   function removeRow(id: string) {
     onChange(rows.filter((r) => r.id !== id));
   }
@@ -44,12 +69,40 @@ export function PairedLineItemsTable({
             One row per item. Fill in the <strong>client</strong> side for what you're charging,
             the <strong>supplier</strong> side for what it costs you — or just one side if a line
             is pure margin (no tracked cost) or a cost that isn't billed to the client separately
-            (e.g. bulk printing folded into markup elsewhere).
+            (e.g. bulk printing folded into markup elsewhere). Each price has an excl. and incl.
+            VAT field — type whichever one you actually have, and the other fills itself in.
           </p>
         </div>
         <button type="button" className="btn-secondary" onClick={addRow}>
           + Add line
         </button>
+      </div>
+
+      <div className="bulk-markup">
+        <label htmlFor={bulkMarginId}>Price every line at</label>
+        <input
+          id={bulkMarginId}
+          type="number"
+          step="1"
+          max={99}
+          className="bulk-markup-input"
+          value={bulkMargin}
+          onChange={(e) => setBulkMargin(e.target.value)}
+        />
+        <span aria-hidden="true">%</span>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={repriceAll}
+          disabled={rows.length === 0 || rows.length === skippedByReprice}
+        >
+          Apply to all lines
+        </button>
+        <span className="bulk-markup-note">
+          Sets each client price from its supplier cost.
+          {skippedByReprice > 0 &&
+            ` ${skippedByReprice} line${skippedByReprice === 1 ? "" : "s"} will be skipped — no supplier cost or client qty yet.`}
+        </span>
       </div>
 
       {descriptionSuggestions && descriptionSuggestions.length > 0 && (
@@ -66,14 +119,20 @@ export function PairedLineItemsTable({
           <div className="paired-cell paired-client-cell paired-cell-head" role="columnheader">
             <span className="paired-group-label">Client — what you charge</span>
             <span>Qty</span>
-            <span>Price</span>
+            <span title="What you charge per unit, before VAT">Price excl. VAT</span>
+            <span title="Fill in either price field — the other one works itself out">
+              Price incl. VAT
+            </span>
             <span>Total</span>
           </div>
           <div className="paired-cell paired-supplier-cell paired-cell-head" role="columnheader">
             <span className="paired-group-label">Supplier — what it costs you</span>
             <span>Vendor</span>
             <span>Qty</span>
-            <span>Cost</span>
+            <span title="What the supplier charges per unit, before VAT">Cost excl. VAT</span>
+            <span title="Fill in either cost field — the other one works itself out">
+              Cost incl. VAT
+            </span>
             <span>Total</span>
           </div>
           <span role="columnheader" title="Profit margin on this line">
@@ -85,8 +144,10 @@ export function PairedLineItemsTable({
         {rows.map((row) => {
           const clientTotal = round2(row.clientQty * row.clientUnitCost);
           const supplierTotal = round2(row.supplierQty * row.supplierUnitCost);
-          const markup =
-            clientTotal > 0 ? round2(((clientTotal - supplierTotal) / clientTotal) * 100) : null;
+          const markup = marginPctFromTotals(clientTotal, supplierTotal);
+          // A row with no cost, or no client qty, can't be priced from a
+          // margin — see clientUnitCostForMargin for why.
+          const canReprice = row.clientQty > 0 && supplierTotal > 0;
 
           return (
             <div className="paired-row" role="row" key={row.id}>
@@ -114,11 +175,25 @@ export function PairedLineItemsTable({
                   min={0}
                   step="0.01"
                   placeholder="0.00"
-                  aria-label="Client price per unit"
+                  aria-label="Client price per unit, excl. VAT"
                   value={row.clientUnitCost}
                   onChange={(e) =>
                     updateRow(row.id, { clientUnitCost: Number(e.target.value) || 0 })
                   }
+                />
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="0.00"
+                  aria-label="Client price per unit, incl. VAT"
+                  value={inclVat(row.clientUnitCost)}
+                  onChange={(e) => {
+                    const typed = Number(e.target.value);
+                    updateRow(row.id, {
+                      clientUnitCost: Number.isFinite(typed) ? exclVat(typed) : 0,
+                    });
+                  }}
                 />
                 <span className="line-total">R {clientTotal.toFixed(2)}</span>
               </div>
@@ -145,21 +220,59 @@ export function PairedLineItemsTable({
                   min={0}
                   step="0.01"
                   placeholder="0.00"
-                  aria-label="Supplier cost per unit"
+                  aria-label="Supplier cost per unit, excl. VAT"
                   value={row.supplierUnitCost}
                   onChange={(e) =>
                     updateRow(row.id, { supplierUnitCost: Number(e.target.value) || 0 })
                   }
                 />
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="0.00"
+                  aria-label="Supplier cost per unit, incl. VAT"
+                  value={inclVat(row.supplierUnitCost)}
+                  onChange={(e) => {
+                    const typed = Number(e.target.value);
+                    updateRow(row.id, {
+                      supplierUnitCost: Number.isFinite(typed) ? exclVat(typed) : 0,
+                    });
+                  }}
+                />
                 <span className="line-total">R {supplierTotal.toFixed(2)}</span>
               </div>
 
-              <span
-                className={`paired-markup ${markup !== null && markup < 20 ? "margin-flag" : ""}`}
-                title="(Client total − supplier total) ÷ client total"
-              >
-                {markup === null ? "—" : `${markup.toFixed(0)}%`}
-              </span>
+              {canReprice ? (
+                <input
+                  type="number"
+                  step="1"
+                  max={99}
+                  className={`paired-markup-input ${
+                    markup !== null && markup < MARGIN_TARGET_PCT ? "margin-flag" : ""
+                  }`}
+                  aria-label={`Markup for ${row.description || "line"}`}
+                  title="Type a % to price this line from its supplier cost"
+                  value={markup === null ? "" : markup.toFixed(0)}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    if (Number.isFinite(next)) repriceRow(row.id, next);
+                  }}
+                />
+              ) : (
+                <span
+                  className={`paired-markup ${
+                    markup !== null && markup < MARGIN_TARGET_PCT ? "margin-flag" : ""
+                  }`}
+                  title={
+                    markup === null
+                      ? "Add a client price to see the margin on this line"
+                      : "Add a supplier cost to price this line from a markup %"
+                  }
+                >
+                  {markup === null ? "—" : `${markup.toFixed(0)}%`}
+                </span>
+              )}
 
               <button
                 type="button"

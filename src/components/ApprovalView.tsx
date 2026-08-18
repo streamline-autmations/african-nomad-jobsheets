@@ -1,10 +1,20 @@
 import { useEffect, useState } from "react";
 import { approveJobSheet, fetchDraftJobSheets } from "../lib/jobSheets";
+import { fetchLatestNsaQuoteForClient } from "../lib/nsaQuotes";
+import { convertJobSheetToNsaQuote } from "../lib/jobSheetToNsaQuote";
 import type { JobSheet } from "../types";
+import { errorMessage } from "../lib/errors";
 
 interface ApprovalViewProps {
   onEditJobSheet: (id: string) => void;
 }
+
+const EMPTY_QUOTE_FIELDS = {
+  quoteNumber: "",
+  vendorNumber: "",
+  poNumber: "",
+  clientAddress: "",
+};
 
 export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [drafts, setDrafts] = useState<JobSheet[]>([]);
@@ -14,6 +24,14 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
 
+  // NSA quote hand-off state.
+  const [quoteFormOpen, setQuoteFormOpen] = useState(false);
+  const [quoteFields, setQuoteFields] = useState(EMPTY_QUOTE_FIELDS);
+  const [quoteBusy, setQuoteBusy] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteMessage, setQuoteMessage] = useState<string | null>(null);
+  const [prefillNote, setPrefillNote] = useState<string | null>(null);
+
   function load() {
     setLoading(true);
     fetchDraftJobSheets()
@@ -21,13 +39,71 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
         setDrafts(data);
         setLoadError(null);
       })
-      .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setLoadError(errorMessage(err)))
       .finally(() => setLoading(false));
   }
 
   useEffect(load, []);
 
   const selected = drafts.find((d) => d.id === selectedId) ?? null;
+
+  // Selecting a different job sheet abandons any half-filled quote form —
+  // carrying one sheet's quote number over to another would be a nasty way to
+  // burn one of NSA's numbers on the wrong job.
+  useEffect(() => {
+    setQuoteFormOpen(false);
+    setQuoteFields(EMPTY_QUOTE_FIELDS);
+    setQuoteError(null);
+    setQuoteMessage(null);
+    setPrefillNote(null);
+  }, [selectedId]);
+
+  // Vendor number and address belong to the NSA-to-mine relationship, not to
+  // the job, so they're the same on every quote to that mine. Pull them from
+  // the last one rather than making him retype them.
+  async function openQuoteForm(jobSheet: JobSheet) {
+    setQuoteFormOpen(true);
+    setQuoteError(null);
+    setQuoteMessage(null);
+    try {
+      const previous = await fetchLatestNsaQuoteForClient(jobSheet.customerNameRaw);
+      if (previous) {
+        setQuoteFields({
+          ...EMPTY_QUOTE_FIELDS,
+          vendorNumber: previous.vendorNumber,
+          clientAddress: previous.clientAddress,
+        });
+        setPrefillNote(
+          `Vendor number and address carried over from quote ${previous.quoteNumber || "(unnumbered)"} for this client.`,
+        );
+      } else {
+        setPrefillNote(null);
+      }
+    } catch (err) {
+      // Prefill is a convenience, never a blocker — the fields are all
+      // editable anyway, so a lookup failure just means typing them.
+      setPrefillNote(`Couldn't load previous quote details: ${errorMessage(err)}`);
+    }
+  }
+
+  async function handleCreateNsaQuote(jobSheet: JobSheet) {
+    setQuoteError(null);
+    setQuoteMessage(null);
+    setQuoteBusy(true);
+    try {
+      const quote = await convertJobSheetToNsaQuote(jobSheet, quoteFields);
+      setQuoteMessage(
+        `NSA quote ${quote.quoteNumber || "(unnumbered)"} created as a draft — open the NSA Quotes tab to print it and send it to the mine.`,
+      );
+      setQuoteFormOpen(false);
+      setQuoteFields(EMPTY_QUOTE_FIELDS);
+      load();
+    } catch (err) {
+      setQuoteError(errorMessage(err));
+    } finally {
+      setQuoteBusy(false);
+    }
+  }
 
   async function handleApprove(jobSheet: JobSheet) {
     setApproveError(null);
@@ -43,7 +119,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
       setSelectedId(null);
       load();
     } catch (err) {
-      setApproveError(err instanceof Error ? err.message : String(err));
+      setApproveError(errorMessage(err));
     } finally {
       setApproving(false);
     }
@@ -110,6 +186,109 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
           )}
 
           {approveError && <div className="banner banner-error">{approveError}</div>}
+          {quoteError && <div className="banner banner-error">{quoteError}</div>}
+          {quoteMessage && <div className="banner banner-success">{quoteMessage}</div>}
+
+          <div className="nsa-handoff">
+            {selected.nsaQuoteId ? (
+              <p className="field-hint">
+                NSA quote already created for this job sheet — find it in the NSA Quotes tab.
+              </p>
+            ) : quoteFormOpen ? (
+              <>
+                <h4>Create the NSA quote for the mine</h4>
+                <p className="section-description">
+                  Copies the {selected.clientLines.length} client line
+                  {selected.clientLines.length === 1 ? "" : "s"} onto an NSA-branded quote.
+                  Supplier costs never cross over — the mine only ever sees NSA.
+                </p>
+                {prefillNote && <p className="field-hint">{prefillNote}</p>}
+
+                <div className="nsa-handoff-fields">
+                  <label className="field">
+                    <span>Quote number</span>
+                    <input
+                      type="text"
+                      value={quoteFields.quoteNumber}
+                      placeholder="e.g. 1291"
+                      onChange={(e) =>
+                        setQuoteFields((f) => ({ ...f, quoteNumber: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Vendor number</span>
+                    <input
+                      type="text"
+                      value={quoteFields.vendorNumber}
+                      placeholder="NSA's vendor no. with this mine"
+                      onChange={(e) =>
+                        setQuoteFields((f) => ({ ...f, vendorNumber: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>PO number (optional)</span>
+                    <input
+                      type="text"
+                      value={quoteFields.poNumber}
+                      placeholder="Blank shows N/A"
+                      onChange={(e) => setQuoteFields((f) => ({ ...f, poNumber: e.target.value }))}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Client address</span>
+                    <input
+                      type="text"
+                      value={quoteFields.clientAddress}
+                      placeholder="For the Bill-to block"
+                      onChange={(e) =>
+                        setQuoteFields((f) => ({ ...f, clientAddress: e.target.value }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <p className="field-hint">
+                  Quote and vendor numbers are free text on purpose — NSA's own system assigns
+                  them, and we must not collide with her sequence.
+                </p>
+
+                <div className="line-items-header">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={quoteBusy}
+                    onClick={() => setQuoteFormOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={quoteBusy || !quoteFields.quoteNumber.trim()}
+                    onClick={() => handleCreateNsaQuote(selected)}
+                  >
+                    {quoteBusy ? "Creating…" : "Create NSA quote"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={approving || selected.clientLines.length === 0}
+                title={
+                  selected.clientLines.length === 0
+                    ? "Add client lines first — there's nothing to quote yet."
+                    : undefined
+                }
+                onClick={() => openQuoteForm(selected)}
+              >
+                Create NSA quote for the mine →
+              </button>
+            )}
+          </div>
 
           <div className="line-items-header">
             <button

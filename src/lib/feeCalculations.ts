@@ -25,6 +25,27 @@ export function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+/**
+ * Converts a VAT-exclusive money amount to VAT-inclusive, and back. Used
+ * purely as a data-entry convenience on the line item tables — you often only
+ * know one of the two numbers (a supplier's incl.-VAT invoice line, or a
+ * client's excl.-VAT price list), and typing either one should fill in the
+ * other rather than making you do the 15% arithmetic by hand.
+ *
+ * Not used anywhere in the actual sheet totals: gross profit, VAT and the
+ * Sibanye discount are all computed once at the sheet/subtotal level in
+ * calculateJobSheetFinancials, from the excl.-VAT unit costs every line item
+ * already stores. These two functions never touch that path — they only
+ * convert what's shown in a second input field.
+ */
+export function inclVat(exclVatAmount: number): number {
+  return round2(exclVatAmount * (1 + VAT_RATE));
+}
+
+export function exclVat(inclVatAmount: number): number {
+  return round2(inclVatAmount / (1 + VAT_RATE));
+}
+
 export function withLineTotal(line: LineItemInput): LineItem {
   return { ...line, lineTotal: round2(line.qty * line.unitCost) };
 }

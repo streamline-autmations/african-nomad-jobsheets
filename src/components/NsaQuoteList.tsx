@@ -8,6 +8,7 @@ import {
 import { convertNsaQuoteToJobSheet } from "../lib/nsaToJobSheet";
 import { NsaQuoteDocument } from "./NsaQuoteDocument";
 import type { NsaQuote } from "../nsaTypes";
+import { errorMessage } from "../lib/errors";
 
 export function NsaQuoteList() {
   const [quotes, setQuotes] = useState<NsaQuote[]>([]);
@@ -27,7 +28,7 @@ export function NsaQuoteList() {
         setQuotes(data);
         setLoadError(null);
       })
-      .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setLoadError(errorMessage(err)))
       .finally(() => setLoading(false));
   }
 
@@ -42,7 +43,7 @@ export function NsaQuoteList() {
       await markNsaQuoteSent(quote.id);
       load();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -59,7 +60,7 @@ export function NsaQuoteList() {
       await markNsaQuoteAccepted(quote.id);
       load();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -77,7 +78,7 @@ export function NsaQuoteList() {
       setInvoiceNumberInput("");
       load();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -94,7 +95,7 @@ export function NsaQuoteList() {
       );
       load();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -116,7 +117,7 @@ export function NsaQuoteList() {
         `Sent to QuickBooks Online as ${quote.status === "invoiced" ? "Invoice" : "Estimate"} ${body.qboDocNumber} — check your connected QBO company.`,
       );
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -160,6 +161,13 @@ export function NsaQuoteList() {
           <div className="financial-grid">
             <span>Subtotal</span>
             <strong>R {selected.subtotal.toFixed(2)}</strong>
+            {/* Without this row the three figures don't add up on screen. */}
+            {selected.discountAmount > 0 && (
+              <>
+                <span>Discount</span>
+                <strong>- R {selected.discountAmount.toFixed(2)}</strong>
+              </>
+            )}
             <span>VAT</span>
             <strong>R {selected.vatAmount.toFixed(2)}</strong>
             <span>Total</span>

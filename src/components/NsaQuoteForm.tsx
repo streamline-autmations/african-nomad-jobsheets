@@ -7,6 +7,7 @@ import {
   saveNsaQuoteDraft,
 } from "../lib/nsaQuotes";
 import type { LineItemInput } from "../types";
+import { errorMessage } from "../lib/errors";
 
 function emptyLine(): LineItemInput {
   return { id: crypto.randomUUID(), description: "", qty: 1, unitCost: 0 };
@@ -102,7 +103,7 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
       resetForm();
       onSaved();
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
+      setSaveError(errorMessage(err));
     } finally {
       setSaving(false);
     }

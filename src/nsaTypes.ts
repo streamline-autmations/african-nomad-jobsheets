@@ -18,6 +18,8 @@ export interface NsaQuote {
   status: NsaQuoteStatus;
   lines: LineItem[];
   subtotal: number;
+  /** Reduction off the subtotal, applied before VAT. 0 on most quotes. */
+  discountAmount: number;
   vatAmount: number;
   total: number;
   nsaInvoiceNumber: string | null;

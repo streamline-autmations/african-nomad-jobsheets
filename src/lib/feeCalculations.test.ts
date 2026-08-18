@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   calculateJobSheetFinancials,
   calculateLinesSubtotal,
+  exclVat,
+  inclVat,
   round2,
   withLineTotal,
 } from "./feeCalculations";
@@ -16,6 +18,33 @@ describe("round2", () => {
     expect(round2(1.005)).toBe(1.01);
     expect(round2(10.005)).toBe(10.01);
     expect(round2(0.1 + 0.2)).toBe(0.3);
+  });
+});
+
+describe("inclVat / exclVat", () => {
+  it("adds and removes 15% VAT", () => {
+    expect(inclVat(100)).toBe(115);
+    expect(exclVat(115)).toBe(100);
+  });
+
+  it("round-trips through cent rounding", () => {
+    // 9.49 * 1.15 = 10.9135 -> rounds to 10.91; going back is not exactly
+    // 9.49 because the incl.-VAT figure already lost a fraction of a cent —
+    // same rounding-budget reality as the markup round trip.
+    const excl = 9.49;
+    const incl = inclVat(excl);
+    expect(incl).toBe(10.91);
+    expect(exclVat(incl)).toBeCloseTo(excl, 1);
+  });
+
+  it("is exact when the numbers divide cleanly", () => {
+    expect(inclVat(200)).toBe(230);
+    expect(exclVat(230)).toBe(200);
+  });
+
+  it("treats zero correctly in both directions", () => {
+    expect(inclVat(0)).toBe(0);
+    expect(exclVat(0)).toBe(0);
   });
 });
 

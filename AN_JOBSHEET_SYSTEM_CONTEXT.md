@@ -98,11 +98,23 @@ Web Connector's own update interval can go as low as ~1 minute but Intuit doesn'
 
 | Component | Detail |
 |---|---|
-| Supabase project | `wnsjzxotknadqvznnijw` — add new tables here |
+| Supabase project | `wnsjzxotknadqvznnijw` — add new tables here. **Signed in as `streamlinebuilds.2@gmail.com`** (see the note below — it is not the obvious account) |
+| Supabase project (sourcing engine) | `mgqfoorchhbtlhvqscbl` — same login |
 | n8n | Hosted on Render at `dockerfile-1n82.onrender.com`, editor at `/home` — same instance handles all AN automation |
 | Vercel | Existing account, auto-deploys from GitHub — Job Sheet App should follow the same deploy pattern as the sourcing engine |
 | Sourcing engine | Separate but related app — a Job Sheet line item may eventually pull cost directly from a sourcing engine result. Keep this in mind but don't couple tightly yet. |
 | Frontend stack | React 18 + Vite + TypeScript — match the sourcing engine's conventions exactly (component structure, Supabase access pattern via a single `lib/` file, never direct component-to-Supabase calls) |
+
+### ⚠️ Which Supabase login owns these projects
+
+**`streamlinebuilds.2@gmail.com`.** Confirmed by Christiaan 2026-08-05.
+
+This is worth stating loudly because it is *not* the account anyone would guess. `streamline.automations.hq@gmail.com` is the git `user.email` on these repos and is the Supabase notification address for every other project he owns (Website, Reckless-Admin, CX Electronics, streamline-admin, app.supabase.com, supabase-green-house) — but it does **not** own either African Nomad project. Neither does the `claude_ai_Supabase` connector's account.
+
+Practical consequences:
+- To resume, inspect, or migrate these databases, sign in as `streamlinebuilds.2@gmail.com`.
+- The `sbp_` personal access token in `C:\Users\User\.mcp.json` belongs to the *other* account and cannot see these projects. Don't waste time with it.
+- The repo-level `.mcp.json` points the `supabase-jobsheet` MCP server at `wnsjzxotknadqvznnijw`, but its OAuth was never completed (empty access token). Authorising it while signed in as the address above is the fastest way to get direct DB access.
 
 ---
 

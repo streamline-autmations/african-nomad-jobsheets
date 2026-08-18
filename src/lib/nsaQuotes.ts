@@ -18,18 +18,35 @@ function requireSupabase() {
 
 export interface NsaQuoteTotals {
   subtotal: number;
+  discountAmount: number;
   vatAmount: number;
   total: number;
 }
 
-// NSA quotes have no fee cascade / Sibanye-style discount — that's AN's
-// internal business logic. This is just the client-facing subtotal/VAT/total
-// NSA would show on her own document.
-export function calculateNsaQuoteTotals(lines: LineItem[]): NsaQuoteTotals {
+/**
+ * The client-facing subtotal/discount/VAT/total on NSA's own document.
+ *
+ * NSA quotes still carry none of AN's *fee cascade* — the NSA and Tuscany 10%
+ * cuts are internal profit splits and must never appear on something a mine
+ * sees. A discount is different: it reduces what the client is actually
+ * billed, so it has to be on the document the client receives, or they never
+ * get it. (Sibanye's 2.5% for 30-day terms is the live case; see
+ * 202608090002_nsa_quote_discount.sql.)
+ *
+ * Applied to the subtotal BEFORE VAT, so VAT is charged on the discounted
+ * amount — identical to calculateJobSheetFinancials, which is what keeps the
+ * internal job sheet and the client's quote agreeing to the cent.
+ */
+export function calculateNsaQuoteTotals(
+  lines: LineItem[],
+  discountAmount = 0,
+): NsaQuoteTotals {
   const subtotal = calculateLinesSubtotal(lines);
-  const vatAmount = round2(subtotal * VAT_RATE);
-  const total = round2(subtotal + vatAmount);
-  return { subtotal, vatAmount, total };
+  const discount = round2(Math.max(0, discountAmount));
+  const discountedSubtotal = round2(subtotal - discount);
+  const vatAmount = round2(discountedSubtotal * VAT_RATE);
+  const total = round2(discountedSubtotal + vatAmount);
+  return { subtotal, discountAmount: discount, vatAmount, total };
 }
 
 type NsaQuoteRow = {
@@ -44,6 +61,7 @@ type NsaQuoteRow = {
   status: NsaQuoteStatus;
   lines: LineItem[];
   subtotal: number;
+  discount_amount: number;
   vat_amount: number;
   total: number;
   nsa_invoice_number: string | null;
@@ -67,6 +85,7 @@ function toNsaQuote(row: NsaQuoteRow): NsaQuote {
     status: row.status,
     lines: row.lines ?? [],
     subtotal: Number(row.subtotal),
+    discountAmount: Number(row.discount_amount ?? 0),
     vatAmount: Number(row.vat_amount),
     total: Number(row.total),
     nsaInvoiceNumber: row.nsa_invoice_number,
@@ -88,6 +107,34 @@ export async function fetchNsaQuotes(): Promise<NsaQuote[]> {
   return (data ?? []).map(toNsaQuote);
 }
 
+/**
+ * The most recent quote/invoice raised for a client, or null if this is the
+ * first. Used to prefill the vendor number and address when converting a job
+ * sheet into an NSA quote: both are properties of the NSA-to-mine relationship
+ * rather than of the individual job, so they're stable across quotes to the
+ * same mine and shouldn't be retyped every time.
+ *
+ * Matched on exact client name — the same string the job sheet carries in
+ * customer_name_raw, since that's what gets copied onto the quote.
+ */
+export async function fetchLatestNsaQuoteForClient(
+  clientName: string,
+): Promise<NsaQuote | null> {
+  const trimmed = clientName.trim();
+  if (!trimmed) return null;
+
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("nsa_quotes")
+    .select("*")
+    .eq("client_name", trimmed)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toNsaQuote(data) : null;
+}
+
 export interface SaveNsaQuoteDraftInput {
   id?: string;
   quoteNumber: string;
@@ -98,11 +145,17 @@ export interface SaveNsaQuoteDraftInput {
   jobDescription: string;
   eventDate: string | null;
   lines: LineItem[];
+  /**
+   * A real reduction to what this client is billed, applied before VAT.
+   * Optional because most quotes have none; set by the job-sheet hand-off,
+   * which carries across whatever discount the AN fee cascade worked out.
+   */
+  discountAmount?: number;
 }
 
 export async function saveNsaQuoteDraft(input: SaveNsaQuoteDraftInput): Promise<NsaQuote> {
   const client = requireSupabase();
-  const totals = calculateNsaQuoteTotals(input.lines);
+  const totals = calculateNsaQuoteTotals(input.lines, input.discountAmount ?? 0);
 
   const row = {
     quote_number: input.quoteNumber,
@@ -114,6 +167,7 @@ export async function saveNsaQuoteDraft(input: SaveNsaQuoteDraftInput): Promise<
     event_date: input.eventDate,
     lines: input.lines,
     subtotal: totals.subtotal,
+    discount_amount: totals.discountAmount,
     vat_amount: totals.vatAmount,
     total: totals.total,
   };
@@ -139,13 +193,19 @@ export interface CreateNsaInvoiceDirectInput {
   jobDescription: string;
   eventDate: string | null;
   lines: LineItem[];
+  /**
+   * A real reduction to what this client is billed, applied before VAT.
+   * Optional because most quotes have none; set by the job-sheet hand-off,
+   * which carries across whatever discount the AN fee cascade worked out.
+   */
+  discountAmount?: number;
 }
 
 export async function createNsaInvoiceDirect(
   input: CreateNsaInvoiceDirectInput,
 ): Promise<NsaQuote> {
   const client = requireSupabase();
-  const totals = calculateNsaQuoteTotals(input.lines);
+  const totals = calculateNsaQuoteTotals(input.lines, input.discountAmount ?? 0);
 
   const row = {
     // No formal quote number exists for a direct invoice — reuse the
@@ -159,6 +219,7 @@ export async function createNsaInvoiceDirect(
     event_date: input.eventDate,
     lines: input.lines,
     subtotal: totals.subtotal,
+    discount_amount: totals.discountAmount,
     vat_amount: totals.vatAmount,
     total: totals.total,
     status: "invoiced" as const,

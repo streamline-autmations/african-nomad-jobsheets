@@ -13,6 +13,7 @@ import {
 } from "../lib/jobSheets";
 import type { Company, JobSheet, JobSheetFile } from "../types";
 import { JobSheetDocument } from "./JobSheetDocument";
+import { errorMessage } from "../lib/errors";
 
 const STATUS_LABELS: Record<JobSheet["status"], string> = {
   draft: "Draft",
@@ -52,7 +53,7 @@ export function JobSheetHistory() {
         setCompanies(companiesData);
         setLoadError(null);
       })
-      .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setLoadError(errorMessage(err)))
       .finally(() => setLoading(false));
   }
 
@@ -68,7 +69,7 @@ export function JobSheetHistory() {
         setQueueEntries(queue);
         setFiles(fileList);
       })
-      .catch((err: unknown) => setActionError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setActionError(errorMessage(err)))
       .finally(() => setDetailLoading(false));
   }
 
@@ -86,7 +87,7 @@ export function JobSheetHistory() {
       load();
       loadDetail(jobSheetId);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -100,7 +101,7 @@ export function JobSheetHistory() {
       load();
       loadDetail(jobSheetId);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -116,7 +117,7 @@ export function JobSheetHistory() {
       }
       loadDetail(jobSheetId);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -127,7 +128,7 @@ export function JobSheetHistory() {
       const url = await getJobSheetFileDownloadUrl(file.storagePath);
       window.open(url, "_blank", "noopener");
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     }
   }
 
@@ -139,7 +140,7 @@ export function JobSheetHistory() {
       await deleteJobSheetFile(file.id, file.storagePath);
       setFiles((prev) => prev.filter((f) => f.id !== file.id));
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      setActionError(errorMessage(err));
     } finally {
       setBusy(false);
     }

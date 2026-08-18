@@ -214,7 +214,7 @@ body {
 
 .paired-row {
   display: grid;
-  grid-template-columns: 1.6fr 2fr 2.4fr 0.7fr auto;
+  grid-template-columns: 1.4fr 2.8fr 3.6fr 0.7fr auto;
   gap: 0.75rem;
   align-items: center;
   padding: 0.4rem 0;
@@ -248,11 +248,12 @@ body {
 }
 
 .paired-client-cell {
+  grid-template-columns: repeat(4, 1fr);
   background: #eef3f7;
 }
 
 .paired-supplier-cell {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   background: #f7f1ea;
 }
 
@@ -292,6 +293,73 @@ body {
 .paired-markup {
   font-variant-numeric: tabular-nums;
   text-align: center;
+}
+
+/* The markup cell is an input wherever the line has a supplier cost to price
+   from, and plain text where it doesn't. Styled to sit at the same weight as
+   the text version so the column doesn't jump between the two states. */
+.paired-markup-input {
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 0.4rem 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 100%;
+  background: var(--surface);
+}
+
+.paired-markup-input.margin-flag {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.bulk-markup {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.bulk-markup-input {
+  width: 4.5rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.bulk-markup-note {
+  color: var(--text-muted);
+  flex: 1 1 20ch;
+  min-width: 20ch;
+}
+
+/* The job sheet -> NSA quote hand-off. Boxed off from the approve/edit
+   actions below it, because it's a different kind of decision: this produces
+   the document the mine sees, approving produces the QuickBooks entries. */
+.nsa-handoff {
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.nsa-handoff h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+
+.nsa-handoff-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0;
 }
 
 .paired-subtotals {
@@ -743,4 +811,31 @@ body {
   .line-items-row-head {
     display: none;
   }
+}
+
+/* Spot-bid check: works backwards from the price a mine named, rather than
+   forwards from costs like the rest of the form. Visually separated for that
+   reason -- it's a what-if, not part of the sheet being saved. */
+.spot-bid {
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.spot-bid h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.spot-bid-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  max-width: 32rem;
+}
+
+.spot-bid-result .financial-grid {
+  margin-bottom: 0.5rem;
 }

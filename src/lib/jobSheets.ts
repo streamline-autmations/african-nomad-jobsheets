@@ -46,6 +46,7 @@ type JobSheetRow = {
   net_margin_pct: number;
   qbd_estimate_txn_id: string | null;
   qbd_invoice_txn_id: string | null;
+  nsa_quote_id: string | null;
   created_at: string;
   approved_at: string | null;
   synced_at: string | null;
@@ -77,6 +78,7 @@ function toJobSheet(row: JobSheetRow): JobSheet {
     belowMarginTarget: Number(row.profit_margin_pct) < 20,
     qbdEstimateTxnId: row.qbd_estimate_txn_id,
     qbdInvoiceTxnId: row.qbd_invoice_txn_id,
+    nsaQuoteId: row.nsa_quote_id,
     createdAt: row.created_at,
     approvedAt: row.approved_at,
     syncedAt: row.synced_at,
@@ -368,6 +370,25 @@ export async function getJobSheetFileDownloadUrl(storagePath: string): Promise<s
     .createSignedUrl(storagePath, 60);
   if (error) throw error;
   return data.signedUrl;
+}
+
+// Mirror of markNsaQuoteConvertedToJobSheet in nsaQuotes.ts. Called by
+// convertJobSheetToNsaQuote (src/lib/jobSheetToNsaQuote.ts) after the quote
+// exists, so the "Create NSA Quote" button can't fire twice and burn two of
+// NSA's quote numbers on one job.
+export async function markJobSheetConvertedToNsaQuote(
+  id: string,
+  nsaQuoteId: string,
+): Promise<JobSheet> {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("job_sheets")
+    .update({ nsa_quote_id: nsaQuoteId })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return toJobSheet(data);
 }
 
 export async function deleteJobSheetFile(id: string, storagePath: string): Promise<void> {

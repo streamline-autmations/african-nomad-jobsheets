@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { getCompanyDetails } from "../lib/anCompany";
 import { downloadElementAsPdf } from "../lib/pdfDownload";
 import type { JobSheet } from "../types";
+import { errorMessage } from "../lib/errors";
 
 interface JobSheetDocumentProps {
   job: JobSheet;
@@ -41,7 +42,7 @@ export function JobSheetDocument({ job, companyName, onClose }: JobSheetDocument
         `${title === "INVOICE" ? "Invoice" : "Quote"}-${safeCustomer}-${job.id.slice(0, 8)}.pdf`,
       );
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : String(err));
+      setDownloadError(errorMessage(err));
     } finally {
       setDownloading(false);
     }
