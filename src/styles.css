@@ -454,6 +454,11 @@ body {
   color: var(--success);
 }
 
+.banner-warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
 .btn-primary,
 .btn-secondary {
   border: none;

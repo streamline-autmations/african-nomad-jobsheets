@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
-import { approveJobSheet, fetchDraftJobSheets } from "../lib/jobSheets";
-import { fetchLatestNsaQuoteForClient } from "../lib/nsaQuotes";
+import { useEffect, useRef, useState } from "react";
+import { approveJobSheet, fetchCompanies, fetchDraftJobSheets } from "../lib/jobSheets";
+import { fetchLatestNsaQuoteForClient, fetchNsaQuoteById } from "../lib/nsaQuotes";
 import { convertJobSheetToNsaQuote } from "../lib/jobSheetToNsaQuote";
-import type { JobSheet } from "../types";
+import type { Company, JobSheet } from "../types";
+import type { NsaQuote } from "../nsaTypes";
 import { errorMessage } from "../lib/errors";
 
 interface ApprovalViewProps {
@@ -18,6 +19,7 @@ const EMPTY_QUOTE_FIELDS = {
 
 export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [drafts, setDrafts] = useState<JobSheet[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -31,12 +33,23 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [quoteMessage, setQuoteMessage] = useState<string | null>(null);
   const [prefillNote, setPrefillNote] = useState<string | null>(null);
+  // The already-created quote for the selected sheet, if any — fetched only
+  // to warn if it's moved past draft (see the drift note near "Edit" below).
+  const [linkedQuote, setLinkedQuote] = useState<NsaQuote | null>(null);
+
+  // Bumped on every openQuoteForm/selection change so a slow response from an
+  // earlier lookup can never overwrite fields for whatever is selected now —
+  // without this, switching drafts mid-lookup (or reopening the form fast)
+  // could inject a different client's vendor number/address, or clobber
+  // something the user had already started typing.
+  const prefillRequestId = useRef(0);
 
   function load() {
     setLoading(true);
-    fetchDraftJobSheets()
-      .then((data) => {
-        setDrafts(data);
+    Promise.all([fetchDraftJobSheets(), fetchCompanies()])
+      .then(([draftData, companyData]) => {
+        setDrafts(draftData);
+        setCompanies(companyData);
         setLoadError(null);
       })
       .catch((err: unknown) => setLoadError(errorMessage(err)))
@@ -46,17 +59,48 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   useEffect(load, []);
 
   const selected = drafts.find((d) => d.id === selectedId) ?? null;
+  const selectedCompanyName = companies.find((c) => c.id === selected?.companyId)?.name ?? "";
+  // NSA holds the vendor-number relationship with the mines African Nomad
+  // works for; Tuscany SA has its own separate silent-partner flow (see
+  // AN_JOBSHEET_SYSTEM_CONTEXT.md). NSA-branded paperwork must only ever
+  // come from an African Nomad job — the database enforces this too
+  // (create_nsa_quote_from_job_sheet), this just keeps the button from being
+  // offered somewhere it would always be rejected.
+  const canQuoteViaNsa = selectedCompanyName === "African Nomad";
 
   // Selecting a different job sheet abandons any half-filled quote form —
   // carrying one sheet's quote number over to another would be a nasty way to
   // burn one of NSA's numbers on the wrong job.
   useEffect(() => {
+    prefillRequestId.current += 1;
     setQuoteFormOpen(false);
     setQuoteFields(EMPTY_QUOTE_FIELDS);
     setQuoteError(null);
     setQuoteMessage(null);
     setPrefillNote(null);
   }, [selectedId]);
+
+  // Once a job sheet has a linked NSA quote, fetch it so we can warn if it's
+  // already moved past draft — editing the job sheet at that point won't
+  // update the document the client already has.
+  useEffect(() => {
+    // Clear immediately, before the fetch starts — otherwise the previous
+    // sheet's quote (number and status) stays on screen under the newly
+    // selected sheet's heading for as long as this request is in flight.
+    setLinkedQuote(null);
+    if (!selected?.nsaQuoteId) return;
+    let cancelled = false;
+    fetchNsaQuoteById(selected.nsaQuoteId)
+      .then((quote) => {
+        if (!cancelled) setLinkedQuote(quote);
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedQuote(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.nsaQuoteId]);
 
   // Vendor number and address belong to the NSA-to-mine relationship, not to
   // the job, so they're the same on every quote to that mine. Pull them from
@@ -65,8 +109,10 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
     setQuoteFormOpen(true);
     setQuoteError(null);
     setQuoteMessage(null);
+    const requestId = ++prefillRequestId.current;
     try {
       const previous = await fetchLatestNsaQuoteForClient(jobSheet.customerNameRaw);
+      if (prefillRequestId.current !== requestId) return; // stale — a newer lookup superseded this one
       if (previous) {
         setQuoteFields({
           ...EMPTY_QUOTE_FIELDS,
@@ -80,6 +126,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
         setPrefillNote(null);
       }
     } catch (err) {
+      if (prefillRequestId.current !== requestId) return;
       // Prefill is a convenience, never a blocker — the fields are all
       // editable anyway, so a lookup failure just means typing them.
       setPrefillNote(`Couldn't load previous quote details: ${errorMessage(err)}`);
@@ -194,6 +241,11 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
               <p className="field-hint">
                 NSA quote already created for this job sheet — find it in the NSA Quotes tab.
               </p>
+            ) : !canQuoteViaNsa ? (
+              <p className="field-hint">
+                NSA quotes are only created from African Nomad jobs — {selectedCompanyName || "this company"}
+                {" "}has its own separate process.
+              </p>
             ) : quoteFormOpen ? (
               <>
                 <h4>Create the NSA quote for the mine</h4>
@@ -289,6 +341,15 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
               </button>
             )}
           </div>
+
+          {linkedQuote && linkedQuote.status !== "draft" && (
+            <div className="banner banner-warning">
+              This job sheet's NSA quote (#{linkedQuote.quoteNumber || "unnumbered"}) has already
+              been {linkedQuote.status === "sent" ? "sent to" : linkedQuote.status === "accepted" ? "accepted by" : "invoiced to"} the
+              client. Editing lines, customer, or discount here will NOT update that document —
+              if pricing needs to change, correct the NSA quote directly or contact the client.
+            </div>
+          )}
 
           <div className="line-items-header">
             <button

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyDiscountAndVat,
   calculateJobSheetFinancials,
   calculateLinesSubtotal,
   exclVat,
   inclVat,
   round2,
+  sibanyeDiscountRateFor,
   withLineTotal,
 } from "./feeCalculations";
 import type { LineItem } from "../types";
@@ -58,6 +60,80 @@ describe("withLineTotal / calculateLinesSubtotal", () => {
 
   it("handles an empty line list as zero", () => {
     expect(calculateLinesSubtotal([])).toBe(0);
+  });
+});
+
+describe("sibanyeDiscountRateFor", () => {
+  it("is the Sibanye rate only for African Nomad + a Sibanye Stillwater customer", () => {
+    expect(sibanyeDiscountRateFor("African Nomad", "Sibanye Stillwater")).toBe(0.025);
+    expect(sibanyeDiscountRateFor("African Nomad", "Sibanye Stillwater East 3")).toBe(0.025);
+  });
+
+  it("is zero for any other company or customer combination", () => {
+    expect(sibanyeDiscountRateFor("Tuscany SA", "Sibanye Stillwater")).toBe(0);
+    expect(sibanyeDiscountRateFor("African Nomad", "Some Other Mine")).toBe(0);
+    expect(sibanyeDiscountRateFor("African Nomad", "Sibanye Platinum")).toBe(0);
+  });
+});
+
+describe("applyDiscountAndVat", () => {
+  it("subtracts the discount before charging VAT on what's left", () => {
+    const result = applyDiscountAndVat(10000, 250);
+    expect(result.discountedSubtotal).toBe(9750);
+    expect(result.vatAmount).toBe(1462.5);
+    expect(result.total).toBe(11212.5);
+  });
+
+  it("is a no-op on the discount when it's zero", () => {
+    const result = applyDiscountAndVat(10000, 0);
+    expect(result.discountedSubtotal).toBe(10000);
+    expect(result.vatAmount).toBe(1500);
+    expect(result.total).toBe(11500);
+  });
+
+  it("is the exact sequence calculateJobSheetFinancials and calculateNsaQuoteTotals both rely on", () => {
+    // Regression anchor: if this function's sequencing ever changes, both
+    // callers move together instead of drifting apart from a one-sided edit.
+    const financials = calculateJobSheetFinancials({
+      companyName: "African Nomad",
+      customerName: "Sibanye Stillwater",
+      clientLines: [line("Catering", 1, 10000)],
+      expenseLines: [],
+    });
+    const direct = applyDiscountAndVat(10000, financials.sibanyeDiscount);
+    expect(direct.vatAmount).toBe(financials.vatAmount);
+    expect(direct.total).toBe(financials.clientTotal);
+  });
+});
+
+describe("calculateJobSheetFinancials — multi-line", () => {
+  it("sums multiple client and expense lines before applying the cascade", () => {
+    const result = calculateJobSheetFinancials({
+      companyName: "African Nomad",
+      customerName: "Some Other Mine",
+      clientLines: [line("Boots", 10, 450), line("Hats", 10, 180), line("Packs", 10, 93.5)],
+      expenseLines: [line("Boots cost", 10, 300), line("Hats cost", 10, 100)],
+    });
+
+    // clientSubtotal = 4500 + 1800 + 935 = 7235
+    expect(result.clientSubtotal).toBe(7235);
+    expect(result.vatAmount).toBe(round2(7235 * 0.15));
+    expect(result.expenseTotal).toBe(4000); // 3000 + 1000
+    expect(result.grossProfit).toBe(round2(7235 - 4000));
+    expect(result.nsaFee).toBe(round2(result.grossProfit * 0.1));
+  });
+
+  it("sums multiple lines and still applies the Sibanye discount once, on the combined subtotal", () => {
+    const result = calculateJobSheetFinancials({
+      companyName: "African Nomad",
+      customerName: "Sibanye Stillwater",
+      clientLines: [line("Boots", 10, 450), line("Hats", 10, 180), line("Packs", 10, 93.5)],
+      expenseLines: [],
+    });
+
+    expect(result.clientSubtotal).toBe(7235);
+    expect(result.sibanyeDiscount).toBe(round2(7235 * 0.025));
+    expect(result.vatAmount).toBe(round2((7235 - result.sibanyeDiscount) * 0.15));
   });
 });
 

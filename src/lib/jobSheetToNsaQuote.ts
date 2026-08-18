@@ -1,5 +1,4 @@
-import { markJobSheetConvertedToNsaQuote } from "./jobSheets";
-import { saveNsaQuoteDraft } from "./nsaQuotes";
+import { createNsaQuoteFromJobSheet } from "./nsaQuotes";
 import type { JobSheet } from "../types";
 
 // The second coupling point between the AN Job Sheet App (Component 1) and the
@@ -14,6 +13,13 @@ import type { JobSheet } from "../types";
 //
 // The quote is created as a `draft`, so the existing human gates still apply —
 // nothing is sent to a mine without someone clicking through Mark as Sent.
+//
+// The insert-and-link-back is one atomic database transaction
+// (create_nsa_quote_from_job_sheet) rather than two separate client calls —
+// see 202608180001_atomic_job_sheet_nsa_quote_handoff.sql for why that
+// matters: a partial failure used to leave an orphaned, unlinked quote
+// behind, and nothing stopped two rapid clicks from creating two quotes for
+// the same job sheet.
 
 export interface ConvertJobSheetToNsaQuoteInput {
   /**
@@ -46,26 +52,18 @@ export async function convertJobSheetToNsaQuote(
     );
   }
 
-  const quote = await saveNsaQuoteDraft({
+  // Only the client side crosses over — expense lines are what AN pays its
+  // suppliers and must never appear on a document the mine sees (see the NSA
+  // relationship notes in AN_JOBSHEET_SYSTEM_CONTEXT.md) — and the RPC pulls
+  // lines and totals (including the Sibanye discount) straight off the job
+  // sheet row it locks, not from this in-memory copy, so they can't drift
+  // apart from an edit made in another tab. See
+  // 202608180001_atomic_job_sheet_nsa_quote_handoff.sql.
+  return createNsaQuoteFromJobSheet({
+    jobSheetId: jobSheet.id,
     quoteNumber: input.quoteNumber.trim(),
     vendorNumber: input.vendorNumber.trim(),
     poNumber: input.poNumber.trim(),
-    clientName: jobSheet.customerNameRaw,
     clientAddress: input.clientAddress.trim(),
-    jobDescription: jobSheet.jobDescription,
-    eventDate: jobSheet.eventDate,
-    // Only the client side crosses over. Expense lines are what AN pays its
-    // suppliers and must never appear on a document the mine sees — see the
-    // NSA relationship notes in AN_JOBSHEET_SYSTEM_CONTEXT.md.
-    lines: jobSheet.clientLines,
-    // The discount does cross over, unlike the NSA/Tuscany fees. Those are
-    // internal profit splits; this is a real reduction to what the mine is
-    // billed, and the NSA document is the only one the mine ever sees — so if
-    // it isn't here, the client never actually receives the discount that AN's
-    // books have already given away.
-    discountAmount: jobSheet.sibanyeDiscount,
   });
-
-  await markJobSheetConvertedToNsaQuote(jobSheet.id, quote.id);
-  return quote;
 }

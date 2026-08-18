@@ -144,6 +144,64 @@ describe("repriceRowToMargin", () => {
   });
 });
 
+describe("Sibanye-discount-aware repricing", () => {
+  // The bug: repriceRowToMargin used to price a line to "20%" purely from its
+  // own supplier/client totals, with no idea a 2.5% sheet-level discount was
+  // about to come off the top. A line "priced to 20%" on a Sibanye/African
+  // Nomad job then actually netted ~17.95% once the discount applied — the
+  // exact bug class that already cost ~R10,400 once on the NSA-document side.
+  // These tests prove discountRate closes that gap.
+  const SIBANYE_RATE = 0.025;
+
+  it("without a discount rate, behaves exactly as before (default stays 0)", () => {
+    expect(clientUnitCostForMargin(8000, 1000, 20)).toBe(10);
+  });
+
+  it("grosses the price up so the post-discount revenue still hits the target margin", () => {
+    // R80 cost, 20% target, 2.5% discount: post-discount revenue needed is
+    // 80 / 0.8 = 100; pre-discount sticker price is 100 / 0.975 = 102.5641...
+    const unitPrice = clientUnitCostForMargin(80, 1, 20, SIBANYE_RATE);
+    expect(unitPrice).toBe(102.56);
+
+    // Confirm the real-world effect: net revenue after the discount clears 20%.
+    const netRevenue = unitPrice! * (1 - SIBANYE_RATE);
+    const actualMargin = ((netRevenue - 80) / netRevenue) * 100;
+    expect(actualMargin).toBeCloseTo(20, 0);
+  });
+
+  it("reproduces the worked example from AN_JOBSHEET_SYSTEM_CONTEXT.md: undiscounted pricing under-delivers", () => {
+    // R80 cost priced to 20% with NO discount awareness gives R100 — but once
+    // the 2.5% discount comes off, actual margin is ~17.95%, not 20%.
+    const naivePrice = clientUnitCostForMargin(80, 1, 20); // discountRate defaults to 0
+    expect(naivePrice).toBe(100);
+    const netRevenue = naivePrice! * (1 - SIBANYE_RATE);
+    const actualMargin = ((netRevenue - 80) / netRevenue) * 100;
+    expect(actualMargin).toBeCloseTo(17.95, 1);
+  });
+
+  it("repriceRowToMargin threads the discount rate through to the row", () => {
+    const result = repriceRowToMargin(row({ clientUnitCost: 0 }), 20, SIBANYE_RATE);
+    expect(result.clientUnitCost).toBeGreaterThan(11.86); // more than the no-discount price
+  });
+
+  it("marginPctFromTotals with a discount rate reads back what repriceRowToMargin targeted", () => {
+    const unitPrice = clientUnitCostForMargin(8000, 1000, 20, SIBANYE_RATE)!;
+    const clientTotal = round2(1000 * unitPrice);
+    const displayedMargin = marginPctFromTotals(clientTotal, 8000, SIBANYE_RATE)!;
+    expect(displayedMargin).toBeCloseTo(20, 0);
+  });
+
+  it("a discountRate of 1 or more is refused rather than dividing by zero", () => {
+    expect(clientUnitCostForMargin(8000, 1000, 20, 1)).toBeNull();
+  });
+
+  it("decimal/fractional target margins are accepted", () => {
+    const unitPrice = clientUnitCostForMargin(8000, 1000, 20.5);
+    expect(unitPrice).not.toBeNull();
+    expect(marginPctFromTotals(round2(1000 * unitPrice!), 8000)).toBeCloseTo(20.5, 0);
+  });
+});
+
 describe("maxSupplierTotalForMargin", () => {
   it("says what you can spend to still clear the target on a known client price", () => {
     // The mine will pay R100,000 and we want 20% -> spend at most R80,000.

@@ -61,6 +61,43 @@ function isSibanyeStillwater(customerName: string): boolean {
   return customerName.trim().toLowerCase().startsWith(SIBANYE_CUSTOMER_NAME.toLowerCase());
 }
 
+/**
+ * The one place that decides whether a job qualifies for the Sibanye 2.5%
+ * discount, returned as a rate rather than a boolean so callers that need to
+ * gross a price up ahead of the discount (see markup.ts's Sibanye-aware
+ * repricing) don't have to re-derive the company/customer gating themselves.
+ */
+export function sibanyeDiscountRateFor(
+  companyName: CompanyName | string,
+  customerName: string,
+): number {
+  return companyName === "African Nomad" && isSibanyeStillwater(customerName)
+    ? SIBANYE_DISCOUNT_RATE
+    : 0;
+}
+
+export interface DiscountAndVat {
+  discountedSubtotal: number;
+  vatAmount: number;
+  total: number;
+}
+
+/**
+ * Discount-then-VAT, the one sequence every client-facing total in this app
+ * follows: a discount reduces what's actually billed, so VAT is charged on
+ * the discounted amount, not the sticker subtotal. Shared by
+ * calculateJobSheetFinancials (AN's internal record) and
+ * calculateNsaQuoteTotals (nsaQuotes.ts, the client-facing NSA document) so
+ * the two can never drift apart from a one-sided edit — they call this
+ * instead of each carrying their own copy of the sequencing.
+ */
+export function applyDiscountAndVat(subtotal: number, discountAmount: number): DiscountAndVat {
+  const discountedSubtotal = round2(subtotal - discountAmount);
+  const vatAmount = round2(discountedSubtotal * VAT_RATE);
+  const total = round2(discountedSubtotal + vatAmount);
+  return { discountedSubtotal, vatAmount, total };
+}
+
 export interface CalculateJobSheetFinancialsInput {
   companyName: CompanyName | string;
   customerName: string;
@@ -84,13 +121,13 @@ export function calculateJobSheetFinancials(
   input: CalculateJobSheetFinancialsInput,
 ): JobSheetFinancials {
   const clientSubtotal = calculateLinesSubtotal(input.clientLines);
-  const sibanyeDiscount =
-    input.companyName === "African Nomad" && isSibanyeStillwater(input.customerName)
-      ? round2(clientSubtotal * SIBANYE_DISCOUNT_RATE)
-      : 0;
-  const discountedSubtotal = round2(clientSubtotal - sibanyeDiscount);
-  const vatAmount = round2(discountedSubtotal * VAT_RATE);
-  const clientTotal = round2(discountedSubtotal + vatAmount);
+  const sibanyeDiscount = round2(
+    clientSubtotal * sibanyeDiscountRateFor(input.companyName, input.customerName),
+  );
+  const { discountedSubtotal, vatAmount, total: clientTotal } = applyDiscountAndVat(
+    clientSubtotal,
+    sibanyeDiscount,
+  );
   const expenseTotal = calculateLinesSubtotal(input.expenseLines);
 
   const grossProfit = round2(discountedSubtotal - expenseTotal);

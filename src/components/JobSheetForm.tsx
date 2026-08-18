@@ -239,6 +239,8 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
         rows={pairedRows}
         onChange={setPairedRows}
         descriptionSuggestions={commonExpenses.map((e) => e.label)}
+        companyName={selectedCompany?.name ?? ""}
+        customerName={customerNameRaw}
       />
 
       <div className="financial-summary">

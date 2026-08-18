@@ -372,23 +372,50 @@ export async function getJobSheetFileDownloadUrl(storagePath: string): Promise<s
   return data.signedUrl;
 }
 
-// Mirror of markNsaQuoteConvertedToJobSheet in nsaQuotes.ts. Called by
-// convertJobSheetToNsaQuote (src/lib/jobSheetToNsaQuote.ts) after the quote
-// exists, so the "Create NSA Quote" button can't fire twice and burn two of
-// NSA's quote numbers on one job.
-export async function markJobSheetConvertedToNsaQuote(
-  id: string,
-  nsaQuoteId: string,
+// NSA Quote -> Job Sheet hand-off (src/lib/nsaToJobSheet.ts). Inserts the job
+// sheet and links it back to the quote in one atomic Postgres transaction
+// (create_job_sheet_from_nsa_quote, 202608180001) — a row lock on the quote
+// plus a re-check that it isn't already linked and is accepted/invoiced, so
+// two rapid clicks or two open tabs can't create two job sheets for one
+// quote, and the "accepted/invoiced only" rule is enforced by the database,
+// not just the UI's canCreateJobSheet check.
+export interface CreateJobSheetFromNsaQuoteInput {
+  quoteId: string;
+  companyId: string;
+  customerNameRaw: string;
+  jobDescription: string;
+  eventDate: string | null;
+  clientLines: LineItem[];
+  financials: JobSheetFinancials;
+}
+
+export async function createJobSheetFromNsaQuote(
+  input: CreateJobSheetFromNsaQuoteInput,
 ): Promise<JobSheet> {
   const client = requireSupabase();
-  const { data, error } = await client
-    .from("job_sheets")
-    .update({ nsa_quote_id: nsaQuoteId })
-    .eq("id", id)
-    .select("*")
-    .single();
+  const f = input.financials;
+  const { data, error } = await client.rpc("create_job_sheet_from_nsa_quote", {
+    p_quote_id: input.quoteId,
+    p_company_id: input.companyId,
+    p_customer_name_raw: input.customerNameRaw,
+    p_job_description: input.jobDescription,
+    p_event_date: input.eventDate,
+    p_client_lines: input.clientLines,
+    p_client_subtotal: f.clientSubtotal,
+    p_sibanye_discount: f.sibanyeDiscount,
+    p_vat_amount: f.vatAmount,
+    p_client_total: f.clientTotal,
+    p_expense_total: f.expenseTotal,
+    p_gross_profit: f.grossProfit,
+    p_profit_margin_pct: f.profitMarginPct,
+    p_nsa_fee: f.nsaFee,
+    p_tuscany_fee: f.tuscanyFee,
+    p_total_fees: f.totalFees,
+    p_net_profit: f.netProfit,
+    p_net_margin_pct: f.netMarginPct,
+  });
   if (error) throw error;
-  return toJobSheet(data);
+  return toJobSheet(data as JobSheetRow);
 }
 
 export async function deleteJobSheetFile(id: string, storagePath: string): Promise<void> {

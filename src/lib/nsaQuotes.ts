@@ -1,5 +1,5 @@
 import { supabase, supabaseConfigured } from "./supabase";
-import { calculateLinesSubtotal, round2, VAT_RATE } from "./feeCalculations";
+import { applyDiscountAndVat, calculateLinesSubtotal, round2 } from "./feeCalculations";
 import type { LineItem } from "../types";
 import type { NsaQuote, NsaQuoteStatus } from "../nsaTypes";
 
@@ -33,9 +33,10 @@ export interface NsaQuoteTotals {
  * get it. (Sibanye's 2.5% for 30-day terms is the live case; see
  * 202608090002_nsa_quote_discount.sql.)
  *
- * Applied to the subtotal BEFORE VAT, so VAT is charged on the discounted
- * amount — identical to calculateJobSheetFinancials, which is what keeps the
- * internal job sheet and the client's quote agreeing to the cent.
+ * Applied to the subtotal BEFORE VAT via the shared applyDiscountAndVat —
+ * the same helper calculateJobSheetFinancials uses, so the internal job
+ * sheet and the client's quote can't drift out of agreement from an edit to
+ * only one side.
  */
 export function calculateNsaQuoteTotals(
   lines: LineItem[],
@@ -43,9 +44,7 @@ export function calculateNsaQuoteTotals(
 ): NsaQuoteTotals {
   const subtotal = calculateLinesSubtotal(lines);
   const discount = round2(Math.max(0, discountAmount));
-  const discountedSubtotal = round2(subtotal - discount);
-  const vatAmount = round2(discountedSubtotal * VAT_RATE);
-  const total = round2(discountedSubtotal + vatAmount);
+  const { vatAmount, total } = applyDiscountAndVat(subtotal, discount);
   return { subtotal, discountAmount: discount, vatAmount, total };
 }
 
@@ -105,6 +104,17 @@ export async function fetchNsaQuotes(): Promise<NsaQuote[]> {
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []).map(toNsaQuote);
+}
+
+export async function fetchNsaQuoteById(id: string): Promise<NsaQuote | null> {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("nsa_quotes")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toNsaQuote(data) : null;
 }
 
 /**
@@ -281,22 +291,38 @@ export async function markNsaQuoteInvoiced(
   return toNsaQuote(data);
 }
 
-// Records that an accepted NSA quote was converted into a real AN Job Sheet
-// (Component 1) — the actual job_sheets insert happens in
-// convertNsaQuoteToJobSheet (src/lib/nsaToJobSheet.ts), which calls this
-// afterwards so the "Create AN Job Sheet" button can't fire twice for the
-// same quote.
-export async function markNsaQuoteConvertedToJobSheet(
-  id: string,
-  jobSheetId: string,
+// Job Sheet -> NSA Quote hand-off (src/lib/jobSheetToNsaQuote.ts). Inserts
+// the quote and links it back to the job sheet in one atomic Postgres
+// transaction (create_nsa_quote_from_job_sheet, 202608180001) — a row lock
+// on the job sheet plus a re-check that it isn't already linked, so two
+// rapid clicks or two open tabs can't create two quotes for one job sheet,
+// and a partial failure can't leave an orphaned unlinked quote behind. Also
+// enforces server-side that this is an African Nomad job — Tuscany SA has
+// its own separate flow and must never produce NSA-branded paperwork.
+//
+// Deliberately takes NO financial numbers — the function reads
+// subtotal/discount/VAT/total straight off the job sheet row it locks, so a
+// stale in-memory copy (the sheet was edited in another tab after this page
+// loaded) can never produce a quote whose lines and totals disagree.
+export interface CreateNsaQuoteFromJobSheetInput {
+  jobSheetId: string;
+  quoteNumber: string;
+  vendorNumber: string;
+  poNumber: string;
+  clientAddress: string;
+}
+
+export async function createNsaQuoteFromJobSheet(
+  input: CreateNsaQuoteFromJobSheetInput,
 ): Promise<NsaQuote> {
   const client = requireSupabase();
-  const { data, error } = await client
-    .from("nsa_quotes")
-    .update({ an_job_sheet_id: jobSheetId })
-    .eq("id", id)
-    .select("*")
-    .single();
+  const { data, error } = await client.rpc("create_nsa_quote_from_job_sheet", {
+    p_job_sheet_id: input.jobSheetId,
+    p_quote_number: input.quoteNumber,
+    p_vendor_number: input.vendorNumber,
+    p_po_number: input.poNumber,
+    p_client_address: input.clientAddress,
+  });
   if (error) throw error;
-  return toNsaQuote(data);
+  return toNsaQuote(data as NsaQuoteRow);
 }

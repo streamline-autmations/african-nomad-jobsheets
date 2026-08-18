@@ -1,5 +1,11 @@
 import { useId, useState } from "react";
-import { MARGIN_TARGET_PCT, exclVat, inclVat, round2 } from "../lib/feeCalculations";
+import {
+  MARGIN_TARGET_PCT,
+  exclVat,
+  inclVat,
+  round2,
+  sibanyeDiscountRateFor,
+} from "../lib/feeCalculations";
 import { marginPctFromTotals, repriceRowToMargin } from "../lib/markup";
 import { emptyPairedRow, type PairedRow } from "../lib/pairedLineItems";
 
@@ -7,6 +13,12 @@ interface PairedLineItemsTableProps {
   rows: PairedRow[];
   onChange: (rows: PairedRow[]) => void;
   descriptionSuggestions?: string[];
+  /** Company + customer on the job sheet this table belongs to — used only to
+   * work out whether the Sibanye Stillwater discount applies, so per-line
+   * margin pricing can target the margin actually kept after that discount
+   * rather than the sticker price. Omit outside a job-sheet context. */
+  companyName?: string;
+  customerName?: string;
 }
 
 // Mirrors the real spreadsheet's layout: one row per line, client price and
@@ -16,12 +28,21 @@ export function PairedLineItemsTable({
   rows,
   onChange,
   descriptionSuggestions,
+  companyName = "",
+  customerName = "",
 }: PairedLineItemsTableProps) {
   const datalistId = useId();
   const bulkMarginId = useId();
   // Held as a string so the field can be empty or mid-typing ("2", "2.") without
   // snapping back to a number on every keystroke.
   const [bulkMargin, setBulkMargin] = useState(String(MARGIN_TARGET_PCT));
+
+  // Reduces the client's net revenue at the sheet level (Sibanye Stillwater's
+  // 2.5%, applied after every line is priced) — see sibanyeDiscountRateFor.
+  // Threaded through repricing/margin-display below so a line "priced to
+  // 20%" actually nets 20% once that discount comes off, instead of quietly
+  // under-delivering.
+  const discountRate = sibanyeDiscountRateFor(companyName, customerName);
 
   function updateRow(id: string, patch: Partial<PairedRow>) {
     onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -31,13 +52,13 @@ export function PairedLineItemsTable({
   // price — the fast path when a mine wants a number now and the supplier
   // cost is the only thing actually known.
   function repriceRow(id: string, marginPct: number) {
-    onChange(rows.map((r) => (r.id === id ? repriceRowToMargin(r, marginPct) : r)));
+    onChange(rows.map((r) => (r.id === id ? repriceRowToMargin(r, marginPct, discountRate) : r)));
   }
 
   function repriceAll() {
     const marginPct = Number(bulkMargin);
     if (!Number.isFinite(marginPct)) return;
-    onChange(rows.map((r) => repriceRowToMargin(r, marginPct)));
+    onChange(rows.map((r) => repriceRowToMargin(r, marginPct, discountRate)));
   }
 
   // Rows repriceRowToMargin would decline to touch (no cost, or no client qty).
@@ -105,6 +126,14 @@ export function PairedLineItemsTable({
         </span>
       </div>
 
+      {discountRate > 0 && (
+        <p className="field-hint">
+          Sibanye Stillwater's {(discountRate * 100).toFixed(1)}% discount applies to this job —
+          margins below already account for it, so a line priced to a target margin nets that
+          margin after the discount, not before.
+        </p>
+      )}
+
       {descriptionSuggestions && descriptionSuggestions.length > 0 && (
         <datalist id={datalistId}>
           {descriptionSuggestions.map((s) => (
@@ -144,7 +173,7 @@ export function PairedLineItemsTable({
         {rows.map((row) => {
           const clientTotal = round2(row.clientQty * row.clientUnitCost);
           const supplierTotal = round2(row.supplierQty * row.supplierUnitCost);
-          const markup = marginPctFromTotals(clientTotal, supplierTotal);
+          const markup = marginPctFromTotals(clientTotal, supplierTotal, discountRate);
           // A row with no cost, or no client qty, can't be priced from a
           // margin — see clientUnitCostForMargin for why.
           const canReprice = row.clientQty > 0 && supplierTotal > 0;
