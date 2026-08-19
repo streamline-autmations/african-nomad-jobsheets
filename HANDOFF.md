@@ -1,198 +1,219 @@
 # Handoff — read this first in a new session
 
-Status as of **2026-08-12**. This is a working log of an in-progress task, not
-finished documentation — update it as things move rather than treating it as
-a historical record. `AN_JOBSHEET_SYSTEM_CONTEXT.md` in this same repo root
-covers the system's architecture and business rules; this file covers *where
-we actually are right now*.
+Status as of **2026-08-19**. Working log, not finished documentation — update
+it as things move. `AN_JOBSHEET_SYSTEM_CONTEXT.md` in this repo root covers
+architecture/business rules; this file covers *where we actually are now*.
 
-The full step-by-step plan being worked through lives at
-`C:\Users\User\.claude\plans\ok-so-you-knwoi-dreamy-engelbart.md` (Claude
-Code plan-mode file, survives across sessions on this machine).
-
----
-
-## ⚠️ Nothing in this session is committed to git yet
-
-`git status` shows 16 modified files and ~15 new files, all uncommitted, sitting
-in the working tree. Do **not** assume anything below is "safe" just because
-it's on disk — a `git stash` or a careless `git checkout` would lose it. If a
-new session starts and the working tree is clean, that means someone
-committed or discarded this work outside of a session — check before
-assuming the plan below is still where things stand.
-
-New files not yet committed (main ones): `src/lib/markup.ts`,
-`src/lib/errors.ts`, `src/lib/jobSheetToNsaQuote.ts`,
-`src/components/SpotBidCheck.tsx`, `src/lib/markup.test.ts`,
-`src/lib/errors.test.ts`, `src/lib/nsaQuotes.test.ts`, and 9 new SQL
-migrations under `supabase/migrations/20260806*` and `supabase/migrations/20260809*`.
+**Two separate plans exist for this repo — don't conflate their phase
+numbers:**
+1. **Sourcing-merge plan** (`C:\Users\User\.claude\plans\ok-so-you-knwoi-dreamy-engelbart.md`)
+   — folding the standalone Sourcing Engine app into this repo. **Parked**,
+   not touched in the 2026-08-19 session — Christiaan explicitly said to
+   ignore procurement/sourcing/dashboards/QBO/unrelated-UI this round.
+2. **Production-readiness plan** (`C:\Users\User\.claude\plans\sunny-juggling-rossum.md`)
+   — the **current active track**: make Job Sheet → NSA Quote → Approval →
+   Invoice → QuickBooks Desktop solid and correct. This is what the rest of
+   this file is about.
 
 ---
 
-## The actual goal (why any of this is happening)
+## Everything is committed and pushed — the tree is clean
 
-Christiaan's bottleneck: a mine asks for something, and the same information
-currently gets typed **three times** — once into the sourcing app, again into
-a job sheet, again into the NSA-branded quote — with markup worked out by
-hand in between. The whole project is collapsing that into one pass: source →
-cost → quote, one enquiry, one entry.
+Unlike every previous handoff note, there is **no uncommitted work** right
+now. Three commits landed on `origin/master` this session:
 
-Three systems involved:
-1. **Job Sheet App** (`Desktop\Africannomad\Quicbooks`, this repo) — internal
-   AN books, syncs to QuickBooks Desktop via the `bridge/` service.
-2. **NSA Quote System** — same repo, different tabs — the client-facing
-   document a mine actually sees (must be 100% NSA-branded, zero AN trace).
-3. **Sourcing Engine** (`Desktop\Africannomad\Product-Sourcing\african-nomad-sourcing-engine`)
-   — separate app, procurement/supplier search, being folded into this repo.
+- `e2836ae` — the *previous* sessions' work (markup input, VAT dual-entry,
+  spot-bid check, Job Sheet→NSA Quote handoff, the original Sibanye
+  NSA-document discount fix, `[object Object]` error-handling fix, sourcing
+  schema replay). This had been sitting uncommitted since 2026-08-12 across
+  multiple sessions — finally committed 2026-08-19 after re-confirming 128
+  tests passing / `tsc` clean.
+- `c566cc7` — this session's Phase 1+2 (see below).
+- `84cd595` — a Codex-review follow-up fix to `c566cc7`'s migration.
 
-Locked-in decisions (do not re-litigate these without asking): QuickBooks
-**Desktop** only, not Online (the QBO scaffold under `api/qbo/*` is dormant,
-kept but not maintained). **One app** — sourcing UI moves into this app as
-tabs. **One database** — sourcing's tables live in this project, not a
-second Supabase project.
-
----
-
-## What's DONE and verified working
-
-**Phase 1 — speed inside the existing app.** All three parts built and
-exercised live against the real database via Playwright:
-- Markup column on job-sheet lines is now a typeable input (`src/lib/markup.ts`)
-  — type a margin %, the client price fills in. Plus "apply to all lines."
-- Spot-bid check (`src/components/SpotBidCheck.tsx`) — enter what the mine
-  will pay, get the max you can spend with suppliers to hold a target margin.
-- One-click **Job Sheet → NSA Quote** (`src/lib/jobSheetToNsaQuote.ts`) — the
-  mirror of the existing NSA Quote → Job Sheet hand-off. Button lives in
-  Approvals. Vendor number/address prefill from the last quote to that client.
-
-**A real money bug was found and fixed during testing of the above.** The
-Sibanye Stillwater 2.5% discount lived only on the internal job sheet, never
-on the NSA document the mine actually receives — so AN's books were giving
-away a discount the client was never actually billed less for. Measured gap
-on one live job sheet: **R10,400.31**. Fixed: `nsa_quotes.discount_amount`
-column added (`202608090002_nsa_quote_discount.sql`), `calculateNsaQuoteTotals()`
-now applies it before VAT exactly like the job-sheet side, discount line
-added to both the printed quote and the on-screen summary. Test in
-`src/lib/nsaQuotes.test.ts` fails if this regresses.
-
-**Two real quotes in the live database may already be affected by this bug**
-— `NSA001` (Sibanye Stillwater E3) and `NSA-TEST-002` (Sibanye Stillwater
-Kloof) were both raised at full price with no discount, before the fix.
-**Never resolved: are these real paperwork that went to the mine, or test
-data?** If real, Sibanye was overbilled ~R3,593.75 and ~R1,725.00
-respectively and Christiaan needs to decide whether to credit it. Ask him.
-
-**VAT excl./incl. fields on job-sheet lines** — both the client price and the
-supplier cost now have two inputs (excl. VAT / incl. VAT), editable in either
-direction, the way a spreadsheet works. `inclVat()`/`exclVat()` helpers added
-to `src/lib/feeCalculations.ts`. This does not change what's stored — the
-excl.-VAT number is still the one that drives margin, sheet totals, and the
-QuickBooks sync. Screenshotted and confirmed both directions work.
-
-**Bonus fix, unrelated to the plan:** every database error in the app
-rendered as literally `"[object Object]"`, because the code assumed
-supabase-js throws `Error` objects — it throws plain `PostgrestError` objects
-instead. Fixed once in `src/lib/errors.ts`, replaced at 22 call sites across
-8 components. No DB failure anywhere in the app was diagnosable before this.
-
-**128 tests passing, `tsc --noEmit` clean**, as of last check this session.
-
-**Sourcing database migration — DONE, but not for the reason planned.** The
-original sourcing Supabase project (`mgqfoorchhbtlhvqscbl`) turned out to be
-**deleted**, not just paused (see the Supabase-account saga below). Since
-there was no data to migrate, the 7 sourcing-engine migrations were simply
-replayed against *this* project (`wnsjzxotknadqvznnijw`) instead —
-`supabase/migrations/202608060001..0007`. Verified live: 16 tables now exist
-(9 job-sheet, 7 sourcing), zero name/type/function collisions, 18 suppliers +
-3 saved products re-seeded, and the app's own anon key can read both halves.
-**This is the database half of Phase 2 only** — the actual app merge
-(sourcing UI moving into this repo's tabs, CSS, nav) has not been started.
+Repo: `https://github.com/streamline-autmations/african-nomad-jobsheets`.
+Deployed to **Vercel** (confirmed by `vercel.json` + `@vercel/node` dep, not
+Netlify) at `https://african-nomad-jobsheets.vercel.app` — found in
+`n8n-workflows/nsa-quote-to-qbo.json`, **not** verified live. **Which Vercel
+account owns it is unknown** — it is not under the Vercel team this session's
+MCP connector has access to (`christiaan-steffens-projects-ebb06fe4`), which
+matches the Supabase saga's pattern (AN's stuff lives under
+`streamlinebuilds.2@gmail.com`, a separate login) but that's an unconfirmed
+guess, not a fact. Ask Christiaan which account/team it's under before
+assuming you can check its deploy status.
 
 ---
 
-## What's BLOCKED or needs Christiaan specifically
+## Production-readiness plan — where it stands
 
-1. **Phase 0 — prove the QuickBooks Desktop bridge actually works.** Still
-   the single biggest unretired risk in the whole project. The `bridge/`
-   service has 27 unit tests and has **never been run against a real
-   QuickBooks Desktop file.** Needs Christiaan: open QBD on a throwaway
-   company file, install/configure QuickBooks Web Connector, approve a test
-   job sheet, click Update in QBWC, confirm an Estimate + Bills actually
-   appear. Steps are in `bridge/README.md`. Cannot be done by an agent —
-   needs the real QuickBooks Desktop application and Web Connector running
-   locally on Christiaan's machine.
+Full plan, current-state findings, and every risk found (22 numbered items)
+live in `C:\Users\User\.claude\plans\sunny-juggling-rossum.md` — read that
+before continuing, it's the source of truth. Summary:
 
-2. **Sourcing app merge (rest of Phase 2) not started.** Database is ready;
-   moving the actual sourcing UI/components into this repo's tabs (with CSS
-   scoping, nav changes, etc.) has not begun.
+**Phase 0 (git safety) — DONE.** See commits above.
 
-3. **n8n workflows still point at the deleted sourcing project.** Both
-   `pDSV9c8tRTR6eWpa` (intake) and `q8uIZPnIw7VeCudG` (feedback) on the
-   shared Render n8n instance have `mgqfoorchhbtlhvqscbl`'s URL and
-   service-role key baked into their node JSON. **Sourcing search will not
-   work at all until these are repointed** at `wnsjzxotknadqvznnijw`. Must
-   use in-place PUT (GET workflow → PUT same id with new `nodes`/`connections`)
-   — delete/recreate orphans the webhook and 409s, per past experience on
-   this same shared instance (100+ other businesses' live workflows on it).
+**Phase 1 (financial-correctness fixes) — DONE**, in `c566cc7`:
+- Per-line margin repricing (`markup.ts`, `PairedLineItemsTable.tsx`) is now
+  Sibanye-discount-aware — previously a line "priced to 20%" on a
+  Sibanye/African Nomad job actually netted ~17.95% once the sheet-level 2.5%
+  discount came off. New `discountRate` param threaded through
+  `clientUnitCostForMargin`/`repriceRowToMargin`/`marginPctFromTotals`, fed by
+  a new `sibanyeDiscountRateFor()` in `feeCalculations.ts`.
+- Extracted the discount→VAT sequencing into one shared
+  `applyDiscountAndVat()` in `feeCalculations.ts`, called by both
+  `calculateJobSheetFinancials` and `nsaQuotes.calculateNsaQuoteTotals` —
+  previously two hand-mirrored copies of the same math, kept in sync only by
+  a test.
 
-4. **Delete the spare Supabase project `adpcujxbuhtrcwlfwigs`.** Christiaan
-   created it mid-troubleshooting before we'd settled on "one database."
-   It's empty and unused now.
+**Phase 2 (Job Sheet ↔ NSA Quote handoff hardening) — DONE**, in `c566cc7`
++ `84cd595`:
+- Both hand-off directions were a plain client-side insert + separate update,
+  no transaction, no row lock, no re-check the link was still null. Replaced
+  with two atomic Postgres RPCs (`create_nsa_quote_from_job_sheet`,
+  `create_job_sheet_from_nsa_quote`), mirroring `approve_job_sheet`'s
+  `SELECT...FOR UPDATE` pattern. Migration:
+  `202608180001_atomic_job_sheet_nsa_quote_handoff.sql`.
+- The forward RPC takes **no financial numbers as arguments** — reads
+  subtotal/discount/VAT/total straight off the job-sheet row it just locked,
+  so a draft edited in another tab can't produce a quote whose lines and
+  totals disagree (a real bug a Codex review caught before this shipped).
+- Partial unique indexes on both link columns as a DB-level backstop.
+  Backfilled 4 legacy one-sided links (old two-step code only ever set one
+  side) — **this included NSA001 and NSA-TEST-002**, both now correctly
+  linked both ways.
+- Server-side Tuscany SA gating (NSA quotes only from African Nomad jobs) —
+  previously UI-only.
+- Fixed a stale-response race in the async vendor/address prefill lookup in
+  `ApprovalView.tsx`, and a stale-render bug in the linked-quote warning.
+- Added an inline warning when editing a job sheet whose NSA quote has
+  already moved past `draft`.
+- Follow-up migration `202608180002_reconcile_legacy_job_sheet_nsa_quote_links.sql`
+  (from a second Codex review pass): the first migration's backfill only
+  repaired one direction; this closes the other, plus adds a pre-flight
+  duplicate-conflict check. Verified live: no conflicts exist today, this is
+  defensive for future drift/a fresh restore.
+- **Every RPC was verified live against the real database** (happy path,
+  re-entry rejection, status/company gating, unique-index backstop) with all
+  test rows cleaned up afterward — not just unit-tested.
 
-5. **Resolve the two possibly-real Sibanye quotes** flagged above.
+**NSA001 / NSA-TEST-002 — resolved.** Christiaan confirmed both were test
+data, not real invoices sent to Sibanye. No financial correction made or
+needed. (Evidence that led here: `NSA-TEST-002`'s job sheet literally reads
+`"Full System Test - Kloof Delivery"`; `NSA001` had placeholder-style
+`vendor_number: "999-999-9"` / `po_number: "PO-777-777-7"`; both job sheets
+were never approved or synced to QuickBooks.)
+
+**Phase 3 (Quote → Invoice / QuickBooks duplicate-protection) — NOT
+STARTED.** This is next. From the plan:
+- Add a partial unique index on `qbd_sync_queue` preventing two
+  `pending`/`sent` rows for the same `(job_sheet_id, action)`.
+- Add an atomic "invoice requested" gate before `convert_job_sheet_to_invoice`
+  queues its row (currently no state recorded before insert — two rapid
+  calls in the confirmation-pending window can insert two invoice rows).
+- Give the bridge's Estimate/Invoice/Bill builders a stable idempotency key
+  (e.g. the `qbd_sync_queue` row id as `RefNumber`), and a check-before-
+  resubmit query path, so the bridge's `requeueStaleSent(15min)` can't create
+  a genuine duplicate transaction in QuickBooks when a confirmation response
+  gets lost after QBD already succeeded. **This is the real "must not create
+  another invoice" fix** — everything else is process-gating around it.
+- **Disable the live "Push to QuickBooks Online" button** in
+  `NsaQuoteList.tsx` — Christiaan pre-approved this. It's fully wired, zero
+  idempotency, and directly contradicts the locked QBD-only decision. Code
+  stays (dormant), just make it unclickable.
+
+**Phase 4 (QBD bridge fixes ahead of a real test) — NOT STARTED.**
+- `buildInvoiceAdd` sends both `LinkToTxnID` and explicit `InvoiceLineAdd`
+  lines together — the code's own comment flags this as unverified; per
+  QBD's documented `LinkToTxnID` auto-copy behavior this is likely wrong.
+  **Christiaan pre-approved dropping the explicit lines** when linking to an
+  Estimate — verify on the first live Invoice test.
+- Add the missing successful `invoice_add` end-to-end session test (only
+  qbXML-shape and failure-path tests exist today).
+- Fix three README inaccuracies: test count says 27, actual is 44+; calls the
+  invoice-link field `LinkedTxnID`, correct name is `LinkToTxnID`; env-var
+  table is missing `QBD_DISCOUNT_ITEM_NAME`/`QBD_DEFAULT_VENDOR_NAME`.
+
+**Full QBD readiness assessment** (from a dedicated Explore-agent inspection
+this session): **EstimateAdd is ready** for a first real test (full
+success+failure coverage, the one builder with a live app code path today).
+**BillAdd is ready** (full coverage, never run live — normal first-
+integration unknowns only). **InvoiceAdd is not ready** — no app path even
+produces `create_invoice` rows yet, no successful-path test exists, and the
+`LinkToTxnID` conflict above needs fixing first. Test Estimate + Bill live
+before attempting Invoice.
+
+**Phase 5 (Christiaan's manual QuickBooks Desktop test) — blocked on him,
+needs Phase 4 done first.** Exact procedure is written out in the plan file
+section 5 (open QBD on a throwaway company file, generate the `.qwc`, Web
+Connector setup, what success/failure looks like, what to send back).
+
+**Phase 6 (full acceptance-test dry run) — not started**, depends on 3–5.
 
 ---
 
-## The Supabase account saga (so it's not re-discovered from scratch)
+## Loose ends, not part of the production-readiness plan
 
-Both Supabase projects went unreachable (NXDOMAIN) partway through this
-session. After a long hunt across 4+ Google accounts and Supabase orgs:
-
-- **`wnsjzxotknadqvznnijw`** (job sheets + NSA quotes + now sourcing too) —
-  project display name **"QuickBooks"**, org **"streamlinebuilds-2's Org"**.
-  Owning login: **`streamlinebuilds.2@gmail.com`** — NOT
-  `streamline.automations.hq@gmail.com`, which is the git email and owns
-  every *other* Streamline Automations Supabase project. This was paused,
-  Christiaan restored it, all data intact.
-- **`mgqfoorchhbtlhvqscbl`** (old standalone sourcing project) — confirmed
-  **deleted**, not recoverable. Schema was preserved in the sourcing repo's
-  migrations and has since been replayed into the QuickBooks project instead
-  (see above).
-- Full detail in memory file `supabase-accounts.md` and in
-  `AN_JOBSHEET_SYSTEM_CONTEXT.md`'s "Which Supabase login owns these
-  projects" section, and in the sourcing repo's own `CLAUDE.md`.
-
-**Practical access:** a Supabase personal access token lives in this repo's
-`.env.local` as `SUPABASE_ACCESS_TOKEN` (gitignored, not committed — but it
-*was* pasted into this chat transcript at one point, so treat it as
-semi-exposed and consider rotating). It was used for direct SQL queries via
-the Management API (`https://api.supabase.com/v1/projects/{ref}/database/query`)
-throughout this session, since the MCP OAuth flow for the `supabase-jobsheet`
-server kept failing with `"Unrecognized client_id"` and was never resolved.
+- **Original Excel Job Sheet template — found mid-session, not yet
+  reconciled against the app.** Two real files landed in the repo root
+  during the 2026-08-19 session: `Jobsheet 2pc travel bag + backpack.xlsx`
+  and `Jobsheet Rowland Cup a Soup project.xlsx` (both untracked, not
+  committed — same treatment as the other loose reference PDFs/images at
+  repo root). A quick unzip-and-grep of their shared strings reveals a
+  **much richer cost-sheet structure than the app currently models**:
+  separate "CLIENT CE" vs "SUPPLIER ITEMS" sections, promoter/crew/days/
+  hours dimensions, a "Management Fee" line, and — the one that actually
+  matters — **`"Profit Margin (Must stay above 40%)"`**, not the app's
+  `MARGIN_TARGET_PCT = 20` in `feeCalculations.ts`. Both files share
+  identical sheet structure/tabs (`ChaseImport`, `WorkTypeList`, `Setup`,
+  `TaskList`, etc. — looks like an export from a BTL/promotions job-costing
+  tool called "Chase", not something built in-house), and are full of real
+  line items from what reads as event/activation/promoter work (MCs, crew,
+  branded surfboards, bean-bag hire), which may be a different job type or
+  business line than the mining corporate-gifting work `job_sheets` handles
+  today. **Not yet properly parsed for real numbers, and no code changed
+  based on this** — the 20%-vs-40% margin-target discrepancy in particular
+  needs Christiaan's input before anything is concluded: is `MARGIN_TARGET_PCT`
+  wrong, is this a different/legacy business line, or something else
+  entirely? Worth a proper structured read (not ad-hoc unzip/grep) if picked
+  back up.
+- **Which Vercel account owns the deployment** — see above, unresolved.
+- **Sourcing app merge** (the *other* plan) — not started, not touched this
+  session, stays parked until Christiaan asks for it.
+- **n8n workflows still point at the deleted sourcing Supabase project**
+  (`mgqfoorchhbtlhvqscbl`) — unrelated to the production-readiness track,
+  carried over from before.
+- **Delete the empty spare Supabase project `adpcujxbuhtrcwlfwigs`** —
+  carried over from before, still not done.
 
 ---
 
-## Where to look for more detail
+## Practical notes for whoever picks this up
 
-- `AN_JOBSHEET_SYSTEM_CONTEXT.md` (this repo root) — full architecture,
-  business rules (fee cascade, NSA relationship, VAT), build history through
-  2026-07-21. The canonical "drop this in as CLAUDE.md" doc.
-- `C:\Users\User\.claude\plans\ok-so-you-knwoi-dreamy-engelbart.md` — the
-  phased plan (Phase 0 through 4) with reasoning for each decision, merge
-  mechanics for the sourcing app, and a running "known problems" list.
-- Memory files under this project (auto-loaded each session):
-  `jobsheet-phase-status.md`, `nsa-quote-system-plan.md`,
-  `supabase-accounts.md`, `supabase-project.md`, `qbo-oauth-setup.md`.
-- `bridge/README.md` — QuickBooks Desktop / Web Connector setup steps for
-  Phase 0.
-- Sourcing repo's own `CLAUDE.md` at
-  `Desktop\Africannomad\Product-Sourcing\african-nomad-sourcing-engine\CLAUDE.md`.
+- **Supabase access**: MCP OAuth for the `supabase-jobsheet` server is still
+  broken (`"Unrecognized client_id"`). Direct SQL via the Management API
+  (`https://api.supabase.com/v1/projects/wnsjzxotknadqvznnijw/database/query`,
+  token in `.env.local`'s `SUPABASE_ACCESS_TOKEN`) is the practical path —
+  used extensively this session to apply and live-verify migrations. That
+  token was pasted into a chat transcript at some point in an earlier
+  session; treat as semi-exposed.
+- **Codex CLI** (`codex`, v0.146.0, confirmed installed/working) — used
+  throughout this session as an independent second-opinion reviewer before
+  committing financially-critical code, per the `codex-router` skill, and it
+  caught three real bugs before they shipped. One CLI quirk worth knowing:
+  `codex exec review --uncommitted` **cannot** take a custom focus-prompt
+  argument in this version (errors despite the `--help` text implying it's
+  allowed) — run it with no prompt for default review criteria, or use plain
+  `codex exec -s read-only "<prompt>"` (not the `review` subcommand) when you
+  need a focused ask.
+- `AN_JOBSHEET_SYSTEM_CONTEXT.md` — architecture/business-rules doc, still
+  the canonical reference for the fee cascade, NSA relationship, VAT rules.
+- Memory files under this project (auto-loaded each session) — check
+  `MEMORY.md`'s index for the current list; several were updated 2026-08-19.
 
 ## First things to do in a new session
 
-1. `git status` — confirm the uncommitted work above is still there.
-2. Ask Christiaan whether he wants this session's work **committed** — it
-   never was, on purpose (never commit without being asked).
-3. Ask about the two possibly-real Sibanye quotes (item 5 above) if not yet
-   resolved.
-4. Otherwise, pick up wherever the "BLOCKED" list above says to.
+1. `git status` — should be clean. If not, something changed outside a
+   tracked session; investigate before assuming this file is accurate.
+2. Read `C:\Users\User\.claude\plans\sunny-juggling-rossum.md` in full.
+3. Pick up at Phase 3 (Quote → Invoice / QuickBooks duplicate-protection)
+   unless Christiaan redirects.
