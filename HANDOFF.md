@@ -46,26 +46,25 @@ both worked totals side by side (R142,135.26 old vs **R145,779.75** new).
 for any future change to the cascade — if they pass, the app agrees with the
 spreadsheet.
 
-### ⚠️ The migration has NOT been applied to the live database yet
+### ✅ The migration IS applied to the live database
 
-`supabase/migrations/202608190001_sibanye_rebate_as_cost.sql` is written,
-reviewed and committed, but **not run against `wnsjzxotknadqvznnijw`**.
-Christiaan needs to approve applying it. Until it runs:
-- the app computes the new cascade, but stored rows still hold old numbers;
-- a legacy draft opened in the UI shows its stale stored totals (e.g. the PPE
-  draft shows VAT R52,905.94 where the new model gives R54,262.50).
+`supabase/migrations/202608190001_sibanye_rebate_as_cost.sql` was applied to
+`wnsjzxotknadqvznnijw` on 2026-08-19 with Christiaan's go-ahead, and verified
+afterwards:
 
-What the migration does: comments the column, zeroes `discount_amount` in the
-estimate/invoice/NSA-quote payloads, **restates every draft** job sheet, and
-adds a reconciliation guard blocking invoicing of any pre-2026-08-19 sheet
-whose stored total no longer reconciles.
+- All **4 drafts restated** and every one reconciles
+  (`client_total = round(subtotal + round(subtotal*0.15,2), 2)`). The Rustenburg
+  draft moved from a stored total of R405,612.19 to **R416,012.50**, with the
+  2.5% now showing as a R10,400.31 cost rather than a discount.
+- `approve_job_sheet` and `convert_job_sheet_to_invoice` both send
+  `discount_amount = 0`; `create_nsa_quote_from_job_sheet` writes `0` onto the
+  quote. Confirmed by reading `pg_get_functiondef` back off the live database.
+- `convert_job_sheet_to_invoice` carries the reconciliation guard that refuses
+  to invoice a pre-cutover sheet whose stored total no longer adds up.
 
-**Live data checked 2026-08-19: all 12 job sheets are test data** ("bdbdb",
-"Sync test job sheet — safe to delete", "Full System Test", "Torch Delivery
-Test Job", "IDK"), and **not one has ever been invoiced** (`qbd_invoice_txn_id`
-is null on every row). So no real money is affected by the reversal. The 8
-approved/synced rows are deliberately *not* restated — they already sent
-QuickBooks their old numbers.
+The 8 approved/synced sheets are deliberately **not** restated — they already
+sent QuickBooks their old numbers. All of them are test data and none has ever
+been invoiced, so the guard is defensive rather than load-bearing.
 
 ---
 
