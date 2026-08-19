@@ -188,9 +188,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
           >
             <strong>{sheet.customerNameRaw || "Unnamed customer"}</strong>
             <span>{sheet.jobDescription || "No description"}</span>
-            <span className={sheet.belowMarginTarget ? "margin-flag" : ""}>
-              Gross margin {sheet.profitMarginPct.toFixed(1)}%
-            </span>
+            <span>Profit margin {sheet.netMarginPct.toFixed(1)}%</span>
           </button>
         ))}
       </div>
@@ -202,23 +200,20 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
           {selected.eventDate && <p>Event date: {selected.eventDate}</p>}
 
           <div className="financial-grid">
-            {selected.sibanyeDiscount > 0 && (
-              <>
-                <span>Sibanye discount (2.5%)</span>
-                <strong>- R {selected.sibanyeDiscount.toFixed(2)}</strong>
-              </>
-            )}
             <span>Client total (incl. VAT)</span>
             <strong>R {selected.clientTotal.toFixed(2)}</strong>
-            <span>Expense total</span>
+            <span>Supplier expenses</span>
             <strong>R {selected.expenseTotal.toFixed(2)}</strong>
+            {selected.sibanyeRebate > 0 && (
+              <>
+                <span>Sibanye 2.5%</span>
+                <strong>R {selected.sibanyeRebate.toFixed(2)}</strong>
+              </>
+            )}
+            <span>Total expenses</span>
+            <strong>R {selected.totalCosts.toFixed(2)}</strong>
             <span>Gross profit</span>
             <strong>R {selected.grossProfit.toFixed(2)}</strong>
-            <span>Gross margin</span>
-            <strong className={selected.belowMarginTarget ? "margin-flag" : ""}>
-              {selected.profitMarginPct.toFixed(1)}%
-              {selected.belowMarginTarget && " ⚠ below 20% target"}
-            </strong>
             <span>Total fees (NSA/Tuscany)</span>
             <strong>R {selected.totalFees.toFixed(2)}</strong>
             <span>Net profit</span>

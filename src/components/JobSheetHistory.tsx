@@ -13,6 +13,7 @@ import {
 } from "../lib/jobSheets";
 import type { Company, JobSheet, JobSheetFile } from "../types";
 import { JobSheetDocument } from "./JobSheetDocument";
+import { JobSheetInternalDocument } from "./JobSheetInternalDocument";
 import { errorMessage } from "../lib/errors";
 
 const STATUS_LABELS: Record<JobSheet["status"], string> = {
@@ -44,6 +45,7 @@ export function JobSheetHistory() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showDocument, setShowDocument] = useState(false);
+  const [showJobSheet, setShowJobSheet] = useState(false);
 
   function load() {
     setLoading(true);
@@ -208,6 +210,9 @@ export function JobSheetHistory() {
           {actionError && <div className="banner banner-error">{actionError}</div>}
 
           <div className="line-items-header" style={{ marginTop: "1rem" }}>
+            <button type="button" className="btn-secondary" onClick={() => setShowJobSheet(true)}>
+              Print job sheet
+            </button>
             <button type="button" className="btn-secondary" onClick={() => setShowDocument(true)}>
               View / print quote
             </button>
@@ -238,6 +243,14 @@ export function JobSheetHistory() {
               job={selected}
               companyName={companyName}
               onClose={() => setShowDocument(false)}
+            />
+          )}
+
+          {showJobSheet && (
+            <JobSheetInternalDocument
+              job={selected}
+              companyName={companyName}
+              onClose={() => setShowJobSheet(false)}
             />
           )}
 

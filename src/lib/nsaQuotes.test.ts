@@ -21,31 +21,42 @@ describe("calculateNsaQuoteTotals", () => {
     });
   });
 
-  it("applies a discount before VAT, so VAT is charged on the reduced amount", () => {
-    const totals = calculateNsaQuoteTotals(lines(["PPE", 1, 100000]), 2500);
+  it("charges VAT on the full subtotal and reports no discount", () => {
+    // Corrected 2026-08-19: Sibanye's 2.5% is a cost AN carries, not a
+    // reduction of what the client is billed, so it must not appear on the
+    // client's document or in its arithmetic. There is no longer any way to
+    // pass one in — a discount that the totals beside it don't reflect is
+    // exactly how these two documents disagreed once before.
+    const totals = calculateNsaQuoteTotals(lines(["PPE", 1, 100000]));
     expect(totals.subtotal).toBe(100000);
-    expect(totals.discountAmount).toBe(2500);
-    // VAT on 97,500 -- not on 100,000.
-    expect(totals.vatAmount).toBe(14625);
-    expect(totals.total).toBe(112125);
-  });
-
-  it("ignores a negative discount rather than inflating the total", () => {
-    const totals = calculateNsaQuoteTotals(lines(["Widget", 1, 100]), -50);
     expect(totals.discountAmount).toBe(0);
-    expect(totals.total).toBe(115);
+    // VAT on the full 100,000 -- not on 97,500.
+    expect(totals.vatAmount).toBe(15000);
+    expect(totals.total).toBe(115000);
   });
 
-  it("defaults to no discount when the argument is omitted", () => {
+  it("matches the real reference invoice", () => {
+    // Invoice NSA06384 to Christo Naude: 16 beanies at R70 = R1,120 + R168 VAT.
+    const totals = calculateNsaQuoteTotals(
+      lines(["Beanies - Pink", 1, 70], ["Beanies - Yellow", 1, 70], ["Beanies - Khaki", 14, 70]),
+    );
+    expect(totals.subtotal).toBe(1120);
+    expect(totals.vatAmount).toBe(168);
+    expect(totals.total).toBe(1288);
+  });
+
+  it("always reports a zero discount", () => {
     expect(calculateNsaQuoteTotals(lines(["Widget", 2, 50])).discountAmount).toBe(0);
   });
 });
 
 describe("the NSA quote agrees with the job sheet it came from", () => {
-  // The bug this guards against: a job sheet gave Sibanye a 2.5% discount, but
-  // the NSA quote -- the only document the mine ever sees -- was raised at full
-  // price. AN's books gave away money the client was never billed less for. On
-  // one live job sheet that was a R10,400.31 gap.
+  // The invariant: the mine's document and AN's internal sheet must always
+  // show the same client total. It used to be possible to break this by
+  // discounting one side and not the other -- a R10,400.31 gap on one live job
+  // sheet. Since 2026-08-19 neither side discounts anything, which makes the
+  // invariant simpler, not less important: these tests are what would catch a
+  // discount creeping back into either one alone.
   const clientLines = lines(
     ["Safety boots", 500, 450],
     ["Hard hats", 500, 180],
@@ -59,39 +70,47 @@ describe("the NSA quote agrees with the job sheet it came from", () => {
       clientLines,
       expenseLines: lines(["Supplier cost", 1, 200000]),
     });
-    // Sanity: the fee cascade did apply a discount for this customer.
-    expect(financials.sibanyeDiscount).toBeGreaterThan(0);
+    // The rebate exists -- it is simply on the cost side, not the client's.
+    expect(financials.sibanyeRebate).toBeGreaterThan(0);
 
-    const quote = calculateNsaQuoteTotals(clientLines, financials.sibanyeDiscount);
+    const quote = calculateNsaQuoteTotals(clientLines);
 
     expect(quote.subtotal).toBe(financials.clientSubtotal);
-    expect(quote.discountAmount).toBe(financials.sibanyeDiscount);
     expect(quote.vatAmount).toBe(financials.vatAmount);
     expect(quote.total).toBe(financials.clientTotal);
   });
 
-  it("still agrees for a customer with no discount", () => {
+  it("still agrees for a customer with no rebate", () => {
     const financials = calculateJobSheetFinancials({
       companyName: "African Nomad",
       customerName: "Harmony Kalgold",
       clientLines,
       expenseLines: [],
     });
-    expect(financials.sibanyeDiscount).toBe(0);
+    expect(financials.sibanyeRebate).toBe(0);
 
-    const quote = calculateNsaQuoteTotals(clientLines, financials.sibanyeDiscount);
-    expect(quote.total).toBe(financials.clientTotal);
+    expect(calculateNsaQuoteTotals(clientLines).total).toBe(financials.clientTotal);
   });
 
-  it("would have disagreed if the discount were dropped — the regression itself", () => {
-    const financials = calculateJobSheetFinancials({
+  it("bills a Sibanye job exactly the same as any other customer", () => {
+    // The 2.5% must be invisible to the client. A Sibanye job and a
+    // non-Sibanye job with identical lines produce identical documents.
+    const sibanye = calculateJobSheetFinancials({
       companyName: "African Nomad",
       customerName: "Sibanye Stillwater Rustenburg",
       clientLines,
       expenseLines: [],
     });
-    const withoutDiscount = calculateNsaQuoteTotals(clientLines);
-    expect(withoutDiscount.total).not.toBe(financials.clientTotal);
-    expect(withoutDiscount.total).toBeGreaterThan(financials.clientTotal);
+    const other = calculateJobSheetFinancials({
+      companyName: "African Nomad",
+      customerName: "Harmony Kalgold",
+      clientLines,
+      expenseLines: [],
+    });
+
+    expect(sibanye.clientTotal).toBe(other.clientTotal);
+    expect(calculateNsaQuoteTotals(clientLines).total).toBe(sibanye.clientTotal);
+    // ...but the two sheets do not make the same profit.
+    expect(sibanye.netProfit).toBeLessThan(other.netProfit);
   });
 });

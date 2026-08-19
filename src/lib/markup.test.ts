@@ -6,19 +6,10 @@ import {
   repriceRowToMargin,
 } from "./markup";
 import { round2 } from "./feeCalculations";
-import type { PairedRow } from "./pairedLineItems";
+import type { RepriceableRow } from "./markup";
 
-function row(overrides: Partial<PairedRow> = {}): PairedRow {
-  return {
-    id: "r1",
-    description: "Lanyard",
-    clientQty: 1000,
-    clientUnitCost: 30.74,
-    vendorName: "",
-    supplierQty: 1000,
-    supplierUnitCost: 9.49,
-    ...overrides,
-  };
+function row(overrides: Partial<RepriceableRow> = {}): RepriceableRow {
+  return { clientQty: 1000, clientUnitCost: 30.74, ...overrides };
 }
 
 describe("marginPctFromTotals", () => {
@@ -114,85 +105,61 @@ describe("round-tripping margin <-> price", () => {
 
 describe("repriceRowToMargin", () => {
   it("sets the client price so the row lands on the target margin", () => {
-    const result = repriceRowToMargin(row({ clientUnitCost: 0 }), 20);
     // R9.49 cost x 1000 = R9,490 -> /0.8 = R11,862.50 -> R11.86/unit.
+    const result = repriceRowToMargin(row({ clientUnitCost: 0 }), 9490, 20);
     expect(result.clientUnitCost).toBe(11.86);
+  });
+
+  it("prices against the combined cost of every supplier line the client line covers", () => {
+    // The real sheets do this constantly: a jacket line is backed by the
+    // jacket (R10,115), its branding (R525) and its delivery (R500). The
+    // client line has to be priced off all three, not just the first.
+    const result = repriceRowToMargin(row({ clientQty: 35, clientUnitCost: 0 }), 11140, 20);
+    expect(result.clientUnitCost).toBe(397.86); // 11140 / 0.8 / 35
+    expect(marginPctFromTotals(round2(35 * 397.86), 11140)).toBeCloseTo(20, 1);
   });
 
   it("handles a supplier selling in packs while the client is billed per unit", () => {
     // 20 packs at R500 = R10,000 of cost, billed as 1000 units at 20% margin.
-    const result = repriceRowToMargin(
-      row({ clientQty: 1000, supplierQty: 20, supplierUnitCost: 500 }),
-      20,
-    );
+    const result = repriceRowToMargin(row({ clientQty: 1000 }), 10000, 20);
     expect(result.clientUnitCost).toBe(12.5);
     expect(marginPctFromTotals(round2(1000 * 12.5), 10000)).toBe(20);
   });
 
   it("leaves a row untouched when the target can't be hit", () => {
-    const noCost = row({ supplierUnitCost: 0, supplierQty: 0 });
-    expect(repriceRowToMargin(noCost, 20)).toBe(noCost);
+    const noCost = row();
+    expect(repriceRowToMargin(noCost, 0, 20)).toBe(noCost);
 
     const noClientQty = row({ clientQty: 0 });
-    expect(repriceRowToMargin(noClientQty, 20)).toBe(noClientQty);
+    expect(repriceRowToMargin(noClientQty, 9490, 20)).toBe(noClientQty);
   });
 
   it("does not mutate the row it was given", () => {
     const original = row({ clientUnitCost: 0 });
-    repriceRowToMargin(original, 20);
+    repriceRowToMargin(original, 9490, 20);
     expect(original.clientUnitCost).toBe(0);
   });
 });
 
-describe("Sibanye-discount-aware repricing", () => {
-  // The bug: repriceRowToMargin used to price a line to "20%" purely from its
-  // own supplier/client totals, with no idea a 2.5% sheet-level discount was
-  // about to come off the top. A line "priced to 20%" on a Sibanye/African
-  // Nomad job then actually netted ~17.95% once the discount applied — the
-  // exact bug class that already cost ~R10,400 once on the NSA-document side.
-  // These tests prove discountRate closes that gap.
-  const SIBANYE_RATE = 0.025;
-
-  it("without a discount rate, behaves exactly as before (default stays 0)", () => {
+describe("margin is measured against the full client price", () => {
+  // Until 2026-08-19 these functions took a discountRate and grossed the price
+  // up, because Sibanye's 2.5% was believed to reduce client revenue. It
+  // doesn't -- it is a cost on the expense side of the sheet -- so a line's
+  // margin is simply profit over the price the mine is actually billed. These
+  // tests are what would catch a grossing-up factor creeping back in.
+  it("prices a line to the target with no adjustment of any kind", () => {
     expect(clientUnitCostForMargin(8000, 1000, 20)).toBe(10);
+    expect(clientUnitCostForMargin(80, 1, 20)).toBe(100);
   });
 
-  it("grosses the price up so the post-discount revenue still hits the target margin", () => {
-    // R80 cost, 20% target, 2.5% discount: post-discount revenue needed is
-    // 80 / 0.8 = 100; pre-discount sticker price is 100 / 0.975 = 102.5641...
-    const unitPrice = clientUnitCostForMargin(80, 1, 20, SIBANYE_RATE);
-    expect(unitPrice).toBe(102.56);
-
-    // Confirm the real-world effect: net revenue after the discount clears 20%.
-    const netRevenue = unitPrice! * (1 - SIBANYE_RATE);
-    const actualMargin = ((netRevenue - 80) / netRevenue) * 100;
-    expect(actualMargin).toBeCloseTo(20, 0);
+  it("reads back exactly the margin it was priced to", () => {
+    const unitPrice = clientUnitCostForMargin(8000, 1000, 20)!;
+    expect(marginPctFromTotals(round2(1000 * unitPrice), 8000)).toBe(20);
   });
 
-  it("reproduces the worked example from AN_JOBSHEET_SYSTEM_CONTEXT.md: undiscounted pricing under-delivers", () => {
-    // R80 cost priced to 20% with NO discount awareness gives R100 — but once
-    // the 2.5% discount comes off, actual margin is ~17.95%, not 20%.
-    const naivePrice = clientUnitCostForMargin(80, 1, 20); // discountRate defaults to 0
-    expect(naivePrice).toBe(100);
-    const netRevenue = naivePrice! * (1 - SIBANYE_RATE);
-    const actualMargin = ((netRevenue - 80) / netRevenue) * 100;
-    expect(actualMargin).toBeCloseTo(17.95, 1);
-  });
-
-  it("repriceRowToMargin threads the discount rate through to the row", () => {
-    const result = repriceRowToMargin(row({ clientUnitCost: 0 }), 20, SIBANYE_RATE);
-    expect(result.clientUnitCost).toBeGreaterThan(11.86); // more than the no-discount price
-  });
-
-  it("marginPctFromTotals with a discount rate reads back what repriceRowToMargin targeted", () => {
-    const unitPrice = clientUnitCostForMargin(8000, 1000, 20, SIBANYE_RATE)!;
-    const clientTotal = round2(1000 * unitPrice);
-    const displayedMargin = marginPctFromTotals(clientTotal, 8000, SIBANYE_RATE)!;
-    expect(displayedMargin).toBeCloseTo(20, 0);
-  });
-
-  it("a discountRate of 1 or more is refused rather than dividing by zero", () => {
-    expect(clientUnitCostForMargin(8000, 1000, 20, 1)).toBeNull();
+  it("is the same price for a Sibanye line as for any other", () => {
+    // No customer-dependent pricing left in this module at all.
+    expect(clientUnitCostForMargin(9490, 1000, 20)).toBe(11.86);
   });
 
   it("decimal/fractional target margins are accepted", () => {

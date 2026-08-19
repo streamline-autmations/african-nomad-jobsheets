@@ -1,14 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { CompanySelect } from "./CompanySelect";
 import { CustomerSelect } from "./CustomerSelect";
-import { PairedLineItemsTable } from "./PairedLineItemsTable";
+import { JobSheetLinesGrid } from "./JobSheetLinesGrid";
 import { calculateJobSheetFinancials, withLineTotal } from "../lib/feeCalculations";
-import {
-  emptyPairedRow,
-  linesToPairedRows,
-  pairedRowsToLines,
-  type PairedRow,
-} from "../lib/pairedLineItems";
+import { linesToSheetRows, sheetRowsToLines, type SheetRow } from "../lib/jobSheetRows";
 import {
   fetchCommonExpenses,
   fetchCompanies,
@@ -43,10 +38,11 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [jobDescription, setJobDescription] = useState("");
   const [eventDate, setEventDate] = useState("");
-  // The form works in "paired rows" (client price + supplier cost on one
-  // line, matching the real spreadsheet) — derived into the two separate
-  // arrays the database/QBD pipeline actually store only at save time.
-  const [pairedRows, setPairedRows] = useState<PairedRow[]>([emptyPairedRow()]);
+  // The form works in sheet rows — the CLIENT and COMPANY EXPENSES columns
+  // side by side, as the real spreadsheet lays them out. Split back into the
+  // two arrays the database and the QBD pipeline actually store only at save
+  // time; see lib/jobSheetRows.ts.
+  const [rows, setRows] = useState<SheetRow[]>(() => linesToSheetRows([], []));
 
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -84,7 +80,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
         setIsNewCustomer(job.customerId === null);
         setJobDescription(job.jobDescription);
         setEventDate(job.eventDate ?? "");
-        setPairedRows(linesToPairedRows(job.clientLines, job.expenseLines));
+        setRows(linesToSheetRows(job.clientLines, job.expenseLines));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -100,10 +96,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
 
   const selectedCompany = companies.find((c) => c.id === companyId);
 
-  const { clientLines, expenseLines } = useMemo(
-    () => pairedRowsToLines(pairedRows),
-    [pairedRows],
-  );
+  const { clientLines, expenseLines } = useMemo(() => sheetRowsToLines(rows), [rows]);
 
   const financials = useMemo(() => {
     return calculateJobSheetFinancials({
@@ -121,7 +114,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
     setIsNewCustomer(false);
     setJobDescription("");
     setEventDate("");
-    setPairedRows([emptyPairedRow()]);
+    setRows(linesToSheetRows([], []));
   }
 
   async function handleSave() {
@@ -189,8 +182,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
       <div className="form-section-heading">
         <h3>Job details</h3>
         <p className="section-description">
-          Which company is doing the work, who it's for, and what the job is — the description
-          becomes a trackable Job in QuickBooks once this sheet is approved and synced.
+          The job description becomes the Job name in QuickBooks.
         </p>
       </div>
 
@@ -222,7 +214,6 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
             onChange={(e) => setJobDescription(e.target.value)}
             placeholder="e.g. Corporate gifting — Q3 site visit"
           />
-          <p className="field-note">Used as the QuickBooks Job name — keep it short and specific.</p>
         </label>
 
         <label className="field">
@@ -235,72 +226,60 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
         </label>
       </div>
 
-      <PairedLineItemsTable
-        rows={pairedRows}
-        onChange={setPairedRows}
+      <JobSheetLinesGrid
+        rows={rows}
+        onChange={setRows}
+        financials={financials}
         descriptionSuggestions={commonExpenses.map((e) => e.label)}
         companyName={selectedCompany?.name ?? ""}
-        customerName={customerNameRaw}
       />
 
-      <div className="financial-summary">
-        <h3>Summary</h3>
-        <p className="section-description">
-          Calculates automatically as you fill in lines above — nothing here needs typing.
-        </p>
-        <div className="financial-summary-columns">
-          <div className="financial-grid">
-            <span>Client subtotal</span>
-            <strong>R {financials.clientSubtotal.toFixed(2)}</strong>
+      {/* The sheet's own footer carries the numbers staff read. This is the
+          rest of the cascade — real, but not part of the spreadsheet face, so
+          it stays folded away rather than sitting between the grid and the
+          save button. */}
+      <details className="job-sheet-breakdown">
+        <summary>Full breakdown</summary>
+        <div className="financial-grid">
+          <span>Client subtotal</span>
+          <strong>R {financials.clientSubtotal.toFixed(2)}</strong>
 
-            {financials.sibanyeDiscount > 0 && (
-              <>
-                <span>Sibanye discount (2.5%)</span>
-                <strong>- R {financials.sibanyeDiscount.toFixed(2)}</strong>
-              </>
-            )}
+          <span>VAT (15%)</span>
+          <strong>R {financials.vatAmount.toFixed(2)}</strong>
 
-            <span>VAT (15%)</span>
-            <strong>R {financials.vatAmount.toFixed(2)}</strong>
+          <span>Client total (incl. VAT)</span>
+          <strong>R {financials.clientTotal.toFixed(2)}</strong>
 
-            <span>Client total (incl. VAT)</span>
-            <strong>R {financials.clientTotal.toFixed(2)}</strong>
-          </div>
+          <span>Supplier expenses</span>
+          <strong>R {financials.expenseTotal.toFixed(2)}</strong>
 
-          <div className="financial-grid financial-grid-fees">
-            <span>Expense total</span>
-            <strong>R {financials.expenseTotal.toFixed(2)}</strong>
+          {financials.sibanyeRebate > 0 && (
+            <>
+              <span>Sibanye 2.5%</span>
+              <strong>R {financials.sibanyeRebate.toFixed(2)}</strong>
+            </>
+          )}
 
-            <span>Gross profit</span>
-            <strong>R {financials.grossProfit.toFixed(2)}</strong>
+          <span>Gross profit</span>
+          <strong>R {financials.grossProfit.toFixed(2)}</strong>
 
-            <span>Gross margin</span>
-            <strong className={financials.belowMarginTarget ? "margin-flag" : ""}>
-              {financials.profitMarginPct.toFixed(1)}%
-              {financials.belowMarginTarget && " ⚠ below 20% target"}
-            </strong>
+          {selectedCompany?.name === "African Nomad" && (
+            <>
+              <span>NSA fee (10%)</span>
+              <strong>R {financials.nsaFee.toFixed(2)}</strong>
+            </>
+          )}
+          {selectedCompany?.name === "Tuscany SA" && (
+            <>
+              <span>Silent partner fee (10%)</span>
+              <strong>R {financials.tuscanyFee.toFixed(2)}</strong>
+            </>
+          )}
 
-            {selectedCompany?.name === "African Nomad" && (
-              <>
-                <span>NSA fee (10%)</span>
-                <strong>R {financials.nsaFee.toFixed(2)}</strong>
-              </>
-            )}
-            {selectedCompany?.name === "Tuscany SA" && (
-              <>
-                <span>Silent partner fee (10%)</span>
-                <strong>R {financials.tuscanyFee.toFixed(2)}</strong>
-              </>
-            )}
-
-            <span>Net profit</span>
-            <strong>R {financials.netProfit.toFixed(2)}</strong>
-
-            <span>Net margin</span>
-            <strong>{financials.netMarginPct.toFixed(1)}%</strong>
-          </div>
+          <span>Net profit</span>
+          <strong>R {financials.netProfit.toFixed(2)}</strong>
         </div>
-      </div>
+      </details>
 
       <SpotBidCheck expenseTotal={financials.expenseTotal} />
 

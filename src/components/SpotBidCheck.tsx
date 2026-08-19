@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { MARGIN_TARGET_PCT, round2 } from "../lib/feeCalculations";
+import { round2 } from "../lib/feeCalculations";
 import { maxSupplierTotalForMargin } from "../lib/markup";
 
 interface SpotBidCheckProps {
@@ -19,7 +19,9 @@ interface SpotBidCheckProps {
 export function SpotBidCheck({ expenseTotal }: SpotBidCheckProps) {
   // Strings, so the fields can be empty or mid-typing without snapping.
   const [targetPrice, setTargetPrice] = useState("");
-  const [targetMargin, setTargetMargin] = useState(String(MARGIN_TARGET_PCT));
+  // "20" is just a sensible starting value to type over — not a target the
+  // sheet is measured against.
+  const [targetMargin, setTargetMargin] = useState("20");
   const priceId = useId();
   const marginId = useId();
 

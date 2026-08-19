@@ -18,7 +18,7 @@ export default function App() {
   const [editJobSheetId, setEditJobSheetId] = useState<string | null>(null);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${tab === "new" ? " app-shell-wide" : ""}`}>
       <header className="app-header">
         <h1>African Nomad — Job Sheets</h1>
         <nav className="app-nav">
