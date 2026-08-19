@@ -256,6 +256,14 @@ body {
   text-align: right;
 }
 
+.sheet-hint {
+  margin: 0;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
 .sheet-scroll {
   overflow-x: auto;
   overflow-y: visible;

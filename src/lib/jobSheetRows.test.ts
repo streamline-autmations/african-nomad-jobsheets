@@ -193,6 +193,70 @@ describe("linesToSheetRows", () => {
     expect(linesToSheetRows([], []).every((r) => r.clientDescription === "")).toBe(true);
   });
 
+  it("keeps a blank separator row, so cost attribution survives a reload", () => {
+    // The separator is load-bearing: it is what stops the trailing unbilled
+    // costs being counted against the Delivery line above them. Flattening it
+    // away on reload would silently change that line's margin.
+    const original = [
+      sheetRow({ ...client("Delivery", 1, 500), ...supplier("Delivery", 1, 500) }),
+      emptySheetRow(),
+      sheetRow({ ...supplier("Accommodation", 1, 7100) }),
+    ];
+    const { clientLines, expenseLines } = sheetRowsToLines(original);
+    const reloaded = linesToSheetRows(
+      clientLines.map((l) => withLineTotal(l)),
+      expenseLines.map((l) => withLineTotal(l)),
+    );
+
+    expect(reloaded[1].supplierDescription).toBe("");
+    expect(reloaded[2].supplierDescription).toBe("Accommodation");
+    expect(supplierCostByClientRow(reloaded).costs[0]).toBe(500);
+    expect(supplierCostByClientRow(reloaded).ownerOf[2]).toBe(-1);
+  });
+
+  it("collapses a wide gap to a single blank row rather than a screenful", () => {
+    const reloaded = linesToSheetRows(
+      [storedLine("c1", "First", 1, 100, { row: 0 }), storedLine("c2", "Later", 1, 200, { row: 40 })],
+      [],
+    );
+    expect(reloaded[0].clientDescription).toBe("First");
+    expect(reloaded[1].clientDescription).toBe("");
+    expect(reloaded[2].clientDescription).toBe("Later");
+  });
+
+  it("round-trips line ids instead of minting new ones on every save", () => {
+    const first = linesToSheetRows(
+      [storedLine("client-1", "Boots", 1, 450, { row: 0 })],
+      [storedLine("supplier-1", "Boots cost", 1, 300, { row: 0 })],
+    );
+    const { clientLines, expenseLines } = sheetRowsToLines(first);
+
+    expect(clientLines[0].id).toBe("client-1");
+    expect(expenseLines[0].id).toBe("supplier-1");
+  });
+
+  it("pairs legacy lines by shared id even when other lines already carry a row", () => {
+    // A document can hold both eras at once; one migrated line must not strand
+    // every un-migrated one on a row of its own.
+    const reloaded = linesToSheetRows(
+      [
+        storedLine("new-1", "Migrated", 1, 100, { row: 0 }),
+        storedLine("shared", "Legacy client", 2, 50),
+      ],
+      [
+        storedLine("new-1-s", "Migrated cost", 1, 60, { row: 0 }),
+        storedLine("shared", "Legacy cost", 2, 30),
+      ],
+    );
+
+    expect(reloaded[0]).toMatchObject(client("Migrated", 1, 100));
+    expect(reloaded[0]).toMatchObject(supplier("Migrated cost", 1, 60));
+    // The legacy pair stays on one row.
+    expect(reloaded[1]).toMatchObject(client("Legacy client", 2, 50));
+    expect(reloaded[1]).toMatchObject(supplier("Legacy cost", 2, 30));
+    expect(reloaded.filter((r) => r.clientDescription === "Legacy client")).toHaveLength(1);
+  });
+
   it("gives every row a distinct id", () => {
     const rows = linesToSheetRows([storedLine("c1", "A", 1, 1)], [storedLine("e1", "B", 1, 1)]);
     expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);

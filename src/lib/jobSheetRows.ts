@@ -20,7 +20,12 @@ import type { LineItem, LineItemInput } from "../types";
 // line up again on reload.
 // ---------------------------------------------------------------------------
 export interface SheetRow {
+  /** Identity of the row itself — React keys and nothing else. */
   id: string;
+  /** Ids of the stored lines this row came from, so a save round-trips the
+   * identity it was loaded with instead of minting a new one every time. */
+  clientLineId?: string;
+  supplierLineId?: string;
   clientDescription: string;
   clientQty: number;
   clientUnitCost: number;
@@ -33,6 +38,8 @@ export interface SheetRow {
 export function emptySheetRow(): SheetRow {
   return {
     id: crypto.randomUUID(),
+    clientLineId: undefined,
+    supplierLineId: undefined,
     clientDescription: "",
     clientQty: 1,
     clientUnitCost: 0,
@@ -77,7 +84,7 @@ export function sheetRowsToLines(rows: SheetRow[]): {
   rows.forEach((row, index) => {
     if (rowHasClient(row)) {
       clientLines.push({
-        id: row.id,
+        id: row.clientLineId ?? `${row.id}-c`,
         description: row.clientDescription,
         qty: row.clientQty,
         unitCost: row.clientUnitCost,
@@ -89,7 +96,7 @@ export function sheetRowsToLines(rows: SheetRow[]): {
         // Distinct from the client line's id: the two sides are separate
         // lines that merely share a row, and an expense line has its own
         // identity in the QBD Bill queue.
-        id: `${row.id}-s`,
+        id: row.supplierLineId ?? `${row.id}-s`,
         description: row.supplierDescription,
         qty: row.supplierQty,
         unitCost: row.supplierUnitCost,
@@ -118,10 +125,6 @@ const MIN_ROWS = 4;
  *     fallback handles.
  */
 export function linesToSheetRows(clientLines: LineItem[], expenseLines: LineItem[]): SheetRow[] {
-  const hasRowNumbers =
-    clientLines.some((l) => typeof l.row === "number") ||
-    expenseLines.some((l) => typeof l.row === "number");
-
   const rows: SheetRow[] = [];
 
   function rowAt(index: number): SheetRow {
@@ -131,6 +134,7 @@ export function linesToSheetRows(clientLines: LineItem[], expenseLines: LineItem
 
   function putClient(index: number, line: LineItem) {
     const row = rowAt(index);
+    row.clientLineId = line.id;
     row.clientDescription = line.description;
     row.clientQty = line.qty;
     row.clientUnitCost = line.unitCost;
@@ -138,43 +142,55 @@ export function linesToSheetRows(clientLines: LineItem[], expenseLines: LineItem
 
   function putSupplier(index: number, line: LineItem) {
     const row = rowAt(index);
+    row.supplierLineId = line.id;
     row.supplierDescription = line.description;
     row.supplierQty = line.qty;
     row.supplierUnitCost = line.unitCost;
     row.vendorName = line.vendorName ?? "";
   }
 
-  if (hasRowNumbers) {
-    // Row numbers are compacted rather than trusted as absolute positions, so
-    // a sheet saved with gaps (or with a stale row number) can't open with a
-    // screenful of blank rows in the middle of it.
-    const used = [
-      ...clientLines.map((l) => l.row),
-      ...expenseLines.map((l) => l.row),
-    ].filter((r): r is number => typeof r === "number");
-    const ordered = [...new Set(used)].sort((a, b) => a - b);
-    const compacted = new Map(ordered.map((original, i) => [original, i]));
-    const fallbackFrom = ordered.length;
+  const hasRow = (l: LineItem) => typeof l.row === "number";
+  const positioned = [...clientLines, ...expenseLines].filter(hasRow);
 
-    let appended = 0;
-    const indexFor = (line: LineItem) =>
-      typeof line.row === "number"
-        ? (compacted.get(line.row) as number)
-        : fallbackFrom + appended++;
+  // Gaps are preserved, but collapsed to a single blank row each.
+  //
+  // Both halves of that matter. A blank row is what ends a cost group (see
+  // supplierCostByClientRow), so flattening gaps away would silently re-attach
+  // unattributed costs to the client line above them and change its margin on
+  // reload. Keeping the raw row numbers instead would reopen a sheet with a
+  // screenful of blanks wherever someone had deleted rows. One blank row per
+  // gap keeps the meaning without the emptiness.
+  const ordered = [...new Set(positioned.map((l) => l.row as number))].sort((a, b) => a - b);
+  const placed = new Map<number, number>();
+  let cursor = 0;
+  ordered.forEach((original, i) => {
+    if (i > 0 && original > ordered[i - 1] + 1) cursor += 1; // one blank separator
+    placed.set(original, cursor);
+    cursor += 1;
+  });
 
-    for (const line of clientLines) putClient(indexFor(line), line);
-    for (const line of expenseLines) putSupplier(indexFor(line), line);
-  } else {
-    // Legacy: the two sides were fused into one row sharing a single id.
-    const rowOfId = new Map<string, number>();
-    clientLines.forEach((line, i) => {
-      rowOfId.set(line.id, i);
-      putClient(i, line);
-    });
-    for (const line of expenseLines) {
-      const existing = rowOfId.get(line.id);
-      putSupplier(existing ?? rows.length, line);
-    }
+  for (const line of clientLines) {
+    if (hasRow(line)) putClient(placed.get(line.row as number) as number, line);
+  }
+  for (const line of expenseLines) {
+    if (hasRow(line)) putSupplier(placed.get(line.row as number) as number, line);
+  }
+
+  // Legacy lines carry no row number. They are paired the old way — a client
+  // line and its expense line shared a single id — and appended after anything
+  // positioned. Handled per line rather than per document, so one migrated line
+  // can't strand every un-migrated one on its own row.
+  const legacyClient = clientLines.filter((l) => !hasRow(l));
+  const legacyExpense = expenseLines.filter((l) => !hasRow(l));
+  const rowOfLegacyId = new Map<string, number>();
+
+  for (const line of legacyClient) {
+    const index = rows.length;
+    rowOfLegacyId.set(line.id, index);
+    putClient(index, line);
+  }
+  for (const line of legacyExpense) {
+    putSupplier(rowOfLegacyId.get(line.id) ?? rows.length, line);
   }
 
   while (rows.length < MIN_ROWS) rows.push(emptySheetRow());

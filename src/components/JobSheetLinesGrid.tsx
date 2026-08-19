@@ -24,6 +24,26 @@ import type { JobSheetFinancials } from "../types";
 // the only thing that moves is the cell cursor, and it moves instantly.
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a pasted block lands, in visual order.
+ *
+ * Only the columns a person types into. The VAT-inclusive fields, both CE
+ * TOTAL columns and MARK-UP are all worked out by the sheet, so pasting into
+ * them would either be overwritten immediately or reprice the line — and
+ * consuming a clipboard position for them would shift every column after it.
+ * The rule is simple enough to say out loud: paste fills the columns you would
+ * have typed, starting at the cell you are in.
+ */
+const PASTE_COLS = [
+  "clientDescription",
+  "clientQty",
+  "clientExcl",
+  "supplierDescription",
+  "supplierQty",
+  "supplierExcl",
+  "vendorName",
+] as const;
+
 /** Focusable cells, in the order they appear across a row. */
 const COLS = [
   "clientDescription",
@@ -100,18 +120,24 @@ function NumberCell({
   showZero = false,
 }: NumberCellProps) {
   const [draft, setDraft] = useState<string | null>(null);
-  // What this cell itself last wrote. Anything arriving in `value` that isn't
-  // that came from somewhere else — Ctrl+D filling down, a paste landing on
-  // the focused cell, "apply to all" repricing — and has to win over the
-  // half-typed text, or the cell shows one number while the sheet holds
-  // another.
-  const ownWrite = useRef<number | null>(null);
+  // Whether the change now arriving in `value` was caused by this cell's own
+  // keystroke. Anything else — Ctrl+D filling down, a paste landing on the
+  // focused cell, "apply to all" repricing — has to win over the half-typed
+  // text, or the cell shows one number while the sheet holds another.
+  //
+  // Tracked by origin rather than by comparing numbers, because a derived cell
+  // legitimately echoes back something other than what was typed: enter 100.01
+  // in a VAT-inclusive field and it returns 100.02 once it has been through
+  // exclVat/inclVat. Comparing values would read that as an external edit and
+  // wipe the field mid-keystroke.
+  const selfEdit = useRef(false);
 
   useEffect(() => {
-    if (ownWrite.current !== null && value !== ownWrite.current) {
-      ownWrite.current = null;
-      setDraft(null);
+    if (selfEdit.current) {
+      selfEdit.current = false;
+      return;
     }
+    setDraft(null);
   }, [value]);
 
   const hide = blank || (value === 0 && !showZero);
@@ -128,18 +154,16 @@ function NumberCell({
       data-c={col}
       value={shown}
       onFocus={(e) => {
-        ownWrite.current = value;
         setDraft(value === 0 && !showZero ? "" : String(value));
         e.currentTarget.select();
       }}
       onChange={(e) => {
-        const parsed = parseNumeric(e.target.value) ?? 0;
-        ownWrite.current = parsed;
+        selfEdit.current = true;
         setDraft(e.target.value);
-        onCommit(parsed);
+        onCommit(parseNumeric(e.target.value) ?? 0);
       }}
       onBlur={() => {
-        ownWrite.current = null;
+        selfEdit.current = false;
         setDraft(null);
       }}
     />
@@ -321,6 +345,17 @@ export function JobSheetLinesGrid({
     if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) {
       e.preventDefault();
       if (rowIndex === 0) return;
+      if (colAttr === "markup") {
+        // Mark-up isn't a stored field, so copying it means repricing this row
+        // to the margin the row above is running at.
+        const above = rows[rowIndex - 1];
+        const aboveMargin = marginPctFromTotals(
+          round2(above.clientQty * above.clientUnitCost),
+          supplierCosts[rowIndex - 1] ?? 0,
+        );
+        if (aboveMargin !== null) repriceRow(rowIndex, aboveMargin);
+        return;
+      }
       const above = rows[rowIndex - 1];
       onChange(rows.map((r, i) => (i === rowIndex ? setCell(r, colAttr, readCell(above, colAttr)) : r)));
       return;
@@ -344,14 +379,23 @@ export function JobSheetLinesGrid({
     e.preventDefault();
 
     const startRow = Number(rowAttr);
-    const startCol = COLS.indexOf(colAttr);
+    // A paste starting on a derived column begins at the next typed column
+    // instead, rather than silently going nowhere.
+    const startCol = Math.max(
+      0,
+      (PASTE_COLS as readonly string[]).indexOf(colAttr) === -1
+        ? (PASTE_COLS as readonly string[]).findIndex(
+            (c) => COLS.indexOf(c as Col) > COLS.indexOf(colAttr),
+          )
+        : (PASTE_COLS as readonly string[]).indexOf(colAttr),
+    );
     let next = grownTo(rows, startRow + grid.length);
 
     grid.forEach((line, r) => {
       const rowIndex = startRow + r;
       let row = next[rowIndex];
       line.forEach((value, c) => {
-        const col = COLS[startCol + c];
+        const col = PASTE_COLS[startCol + c];
         if (!col) return; // pasted wider than the sheet — drop the overflow
         row = setCell(row, col, value.trim());
       });
@@ -395,6 +439,13 @@ export function JobSheetLinesGrid({
           </button>
         </div>
       </div>
+
+      {/* The one thing that isn't discoverable by looking. Everything else on
+          this grid behaves the way a spreadsheet does. */}
+      <p className="sheet-hint">
+        Paste straight from Excel — description, qty and cost fill down from
+        wherever you are. Enter and the arrows move, Ctrl+D copies from above.
+      </p>
 
       {descriptionSuggestions && descriptionSuggestions.length > 0 && (
         <datalist id={datalistId}>

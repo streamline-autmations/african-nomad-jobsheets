@@ -163,11 +163,12 @@ begin
   -- below now sends the full client_lines with no discount. Invoicing one
   -- would put a total in QuickBooks that its own lines don't add up to, so
   -- refuse rather than guess which number was meant.
-  if sheet.client_total is distinct from round(sheet.client_subtotal * 1.15, 2) then
+  if sheet.client_total is distinct from
+     round(sheet.client_subtotal + round(sheet.client_subtotal * 0.15, 2), 2) then
     raise exception
       'job_sheet % was costed under the old discount model (subtotal %, stored total %, expected %) — re-check it before invoicing',
       p_job_sheet_id, sheet.client_subtotal, sheet.client_total,
-      round(sheet.client_subtotal * 1.15, 2);
+      round(sheet.client_subtotal + round(sheet.client_subtotal * 0.15, 2), 2);
   end if;
 
   insert into public.qbd_sync_queue (job_sheet_id, action, payload)
@@ -294,10 +295,14 @@ with recomputed as (
     c.name as company_name,
     sub.client_subtotal,
     sub.expense_total,
+    -- Mirrors applyVat() exactly: VAT is rounded to the cent FIRST, then added.
+    -- round(subtotal * 1.15, 2) is not the same number — on a subtotal of
+    -- 13.70 it gives 15.76 where the app gives 15.75 — and the rebate is a
+    -- percentage of this total, so the difference propagates.
     round(sub.client_subtotal * 0.15, 2) as vat_amount,
-    round(sub.client_subtotal * 1.15, 2) as client_total,
+    round(sub.client_subtotal + round(sub.client_subtotal * 0.15, 2), 2) as client_total,
     round(
-      round(sub.client_subtotal * 1.15, 2)
+      round(sub.client_subtotal + round(sub.client_subtotal * 0.15, 2), 2)
       * case
           when c.name = 'African Nomad'
            and lower(trim(js.customer_name_raw)) like 'sibanye stillwater%'
