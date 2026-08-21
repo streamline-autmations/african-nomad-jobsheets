@@ -416,6 +416,67 @@ body {
   align-items: center;
 }
 
+.sheet-desc-cell {
+  position: relative;
+  height: 100%;
+}
+
+.sheet-supplier-desc .sheet-desc-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The typeahead's own list — anchored to the description cell, not the row,
+   so it overlays whatever is beneath it instead of pushing rows apart. No
+   transition: this sheet doesn't animate. */
+.sheet-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  min-width: 100%;
+  max-width: 22rem;
+  max-height: 12rem;
+  margin: 0;
+  padding: 0.2rem 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 4px 10px rgb(0 0 0 / 0.12);
+}
+
+.sheet-suggestions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  overflow: hidden;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.sheet-suggestion-active,
+.sheet-suggestions li:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.sheet-suggestion-qty {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-suggestion-active .sheet-suggestion-qty,
+.sheet-suggestions li:hover .sheet-suggestion-qty {
+  color: inherit;
+}
+
 /* Copies a supplier item across to the client side — the spreadsheet does
    this with `=J11`, and it matches how the job is actually costed: type the
    supplier items first, then price them. */

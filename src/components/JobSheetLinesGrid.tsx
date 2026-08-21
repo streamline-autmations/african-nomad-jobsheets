@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { exclVat, inclVat, round2 } from "../lib/feeCalculations";
 import { clientUnitCostForMargin, marginPctFromTotals } from "../lib/markup";
 import {
@@ -170,6 +170,167 @@ function NumberCell({
   );
 }
 
+/** A candidate the description autocomplete can offer. `qty` is known when
+ * the suggestion came from a row already on the sheet — offered from the
+ * common-expenses list, it isn't, and picking it fills the description only. */
+interface Suggestion {
+  description: string;
+  qty: number | null;
+}
+
+interface Candidate extends Suggestion {
+  qty: number;
+  rowIndex: number;
+}
+
+function candidatesFrom(
+  rows: SheetRow[],
+  get: (row: SheetRow) => { desc: string; qty: number },
+): Candidate[] {
+  return rows
+    .map((row, rowIndex) => ({ ...get(row), rowIndex }))
+    .filter((c) => c.desc.trim() !== "")
+    .map((c) => ({ description: c.desc.trim(), qty: c.qty, rowIndex: c.rowIndex }));
+}
+
+/** First occurrence wins, case-insensitively — so a match found on the
+ * opposite side of the sheet (the one most worth surfacing) isn't shadowed
+ * by a same-side or history match spelled the same way. */
+function dedupeSuggestions<T extends Suggestion>(list: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of list) {
+    const key = item.description.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+interface DescriptionCellProps {
+  value: string;
+  rowIndex: number;
+  col: "clientDescription" | "supplierDescription";
+  ariaLabel: string;
+  suggestions: Suggestion[];
+  onChangeText: (text: string) => void;
+  /** Fills the description and, when the suggestion carries one, the
+   * quantity too — the whole point being that adding "Powerbanks" on one
+   * side and then typing "pow" on the other reproduces both fields. */
+  onPick: (suggestion: Suggestion) => void;
+}
+
+/**
+ * A description cell with a live typeahead sourced from the rest of this job
+ * sheet (either side) plus the common-expenses list.
+ *
+ * Not a `<datalist>`: picking a browser datalist option can only set the
+ * text, and the whole reason this exists is to carry the quantity across
+ * with it. Arrow keys and Enter are only taken over while suggestions are
+ * actually showing, so the grid's own cell-to-cell navigation is untouched
+ * the rest of the time.
+ */
+function DescriptionCell({
+  value,
+  rowIndex,
+  col,
+  ariaLabel,
+  suggestions,
+  onChangeText,
+  onPick,
+}: DescriptionCellProps) {
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
+
+  const query = value.trim().toLowerCase();
+  const filtered =
+    query === ""
+      ? []
+      : suggestions
+          .filter((s) => s.description.toLowerCase().includes(query))
+          .sort((a, b) => {
+            const aStarts = a.description.toLowerCase().startsWith(query) ? 0 : 1;
+            const bStarts = b.description.toLowerCase().startsWith(query) ? 0 : 1;
+            return aStarts - bStarts || a.description.localeCompare(b.description);
+          })
+          .slice(0, 8);
+
+  const showDropdown = open && filtered.length > 0;
+
+  function pick(s: Suggestion) {
+    onPick(s);
+    setOpen(false);
+    setHighlight(-1);
+  }
+
+  return (
+    <div className="sheet-desc-cell">
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={showDropdown}
+        aria-autocomplete="list"
+        aria-label={ariaLabel}
+        data-r={rowIndex}
+        data-c={col}
+        value={value}
+        onChange={(e) => {
+          onChangeText(e.target.value);
+          setOpen(true);
+          setHighlight(-1);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => {
+          // A click on a suggestion fires its own mousedown handler first —
+          // this just has to outlive that before it hides the list.
+          window.setTimeout(() => setOpen(false), 120);
+        }}
+        onKeyDown={(e) => {
+          if (!showDropdown) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            e.stopPropagation();
+            setHighlight((h) => (h + 1) % filtered.length);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            e.stopPropagation();
+            setHighlight((h) => (h <= 0 ? filtered.length - 1 : h - 1));
+          } else if (e.key === "Enter" && highlight >= 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            pick(filtered[highlight]);
+          } else if (e.key === "Escape") {
+            e.stopPropagation();
+            setOpen(false);
+            setHighlight(-1);
+          }
+        }}
+      />
+      {showDropdown && (
+        <ul className="sheet-suggestions" role="listbox">
+          {filtered.map((s, i) => (
+            <li
+              key={s.description}
+              role="option"
+              aria-selected={i === highlight}
+              className={i === highlight ? "sheet-suggestion-active" : undefined}
+              onMouseDown={(e) => {
+                // Beats the input's onBlur, which fires first on a mouseup-based click.
+                e.preventDefault();
+                pick(s);
+              }}
+            >
+              <span>{s.description}</span>
+              {s.qty !== null && <span className="sheet-suggestion-qty">qty {s.qty}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface JobSheetLinesGridProps {
   rows: SheetRow[];
   onChange: (rows: SheetRow[]) => void;
@@ -185,7 +346,6 @@ export function JobSheetLinesGrid({
   descriptionSuggestions,
   companyName = "",
 }: JobSheetLinesGridProps) {
-  const datalistId = useId();
   const bulkMarginId = useId();
   const gridRef = useRef<HTMLDivElement>(null);
   const [bulkMargin, setBulkMargin] = useState("");
@@ -194,6 +354,33 @@ export function JobSheetLinesGrid({
   const pendingFocus = useRef<{ row: number; col: Col } | null>(null);
 
   const { costs: supplierCosts, ownerOf } = supplierCostByClientRow(rows);
+
+  // Autocomplete sources: every client line, every supplier line, and the
+  // common-expenses list — kept separate so a suggestion from the *opposite*
+  // side of the sheet (the useful one, carrying a quantity) can be ranked
+  // ahead of a same-side or history match spelled the same way.
+  const clientCandidates = useMemo(
+    () => candidatesFrom(rows, (row) => ({ desc: row.clientDescription, qty: row.clientQty })),
+    [rows],
+  );
+  const supplierCandidates = useMemo(
+    () => candidatesFrom(rows, (row) => ({ desc: row.supplierDescription, qty: row.supplierQty })),
+    [rows],
+  );
+  const historyCandidates: Suggestion[] = useMemo(
+    () => (descriptionSuggestions ?? []).map((description) => ({ description, qty: null })),
+    [descriptionSuggestions],
+  );
+
+  function suggestionsFor(side: "client" | "supplier", rowIndex: number): Suggestion[] {
+    const opposite = side === "client" ? supplierCandidates : clientCandidates;
+    // The row being typed into still counts on its own side — its
+    // in-progress text isn't useful as a suggestion for itself.
+    const sameSide = (side === "client" ? clientCandidates : supplierCandidates).filter(
+      (c) => c.rowIndex !== rowIndex,
+    );
+    return dedupeSuggestions<Suggestion>([...opposite, ...sameSide, ...historyCandidates]);
+  }
 
   useEffect(() => {
     const target = pendingFocus.current;
@@ -447,14 +634,6 @@ export function JobSheetLinesGrid({
         wherever you are. Enter and the arrows move, Ctrl+D copies from above.
       </p>
 
-      {descriptionSuggestions && descriptionSuggestions.length > 0 && (
-        <datalist id={datalistId}>
-          {descriptionSuggestions.map((s) => (
-            <option key={s} value={s} />
-          ))}
-        </datalist>
-      )}
-
       <div className="sheet-scroll">
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
         <div className="sheet-grid" ref={gridRef} onKeyDown={handleKeyDown} onPaste={handlePaste}>
@@ -513,14 +692,19 @@ export function JobSheetLinesGrid({
                   {isRolledUp ? "↳" : index + 1}
                 </span>
 
-                <input
-                  type="text"
-                  list={datalistId}
-                  aria-label={`Row ${index + 1} client description`}
-                  data-r={index}
-                  data-c="clientDescription"
+                <DescriptionCell
                   value={row.clientDescription}
-                  onChange={(e) => updateRow(index, { clientDescription: e.target.value })}
+                  rowIndex={index}
+                  col="clientDescription"
+                  ariaLabel={`Row ${index + 1} client description`}
+                  suggestions={suggestionsFor("client", index)}
+                  onChangeText={(text) => updateRow(index, { clientDescription: text })}
+                  onPick={(s) =>
+                    updateRow(index, {
+                      clientDescription: s.description,
+                      ...(s.qty !== null ? { clientQty: s.qty } : {}),
+                    })
+                  }
                 />
                 <NumberCell
                   className="num"
@@ -578,14 +762,19 @@ export function JobSheetLinesGrid({
                 )}
 
                 <div className="sheet-supplier-desc">
-                  <input
-                    type="text"
-                    list={datalistId}
-                    aria-label={`Row ${index + 1} supplier item`}
-                    data-r={index}
-                    data-c="supplierDescription"
+                  <DescriptionCell
                     value={row.supplierDescription}
-                    onChange={(e) => updateRow(index, { supplierDescription: e.target.value })}
+                    rowIndex={index}
+                    col="supplierDescription"
+                    ariaLabel={`Row ${index + 1} supplier item`}
+                    suggestions={suggestionsFor("supplier", index)}
+                    onChangeText={(text) => updateRow(index, { supplierDescription: text })}
+                    onPick={(s) =>
+                      updateRow(index, {
+                        supplierDescription: s.description,
+                        ...(s.qty !== null ? { supplierQty: s.qty } : {}),
+                      })
+                    }
                   />
                   {row.supplierDescription.trim() !== "" && row.clientDescription.trim() === "" && (
                     <button
