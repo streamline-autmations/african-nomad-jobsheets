@@ -433,6 +433,31 @@ export function JobSheetLinesGrid({
     onChange(next.length > 0 ? next : [emptySheetRow()]);
   }
 
+  /** Swaps a row with its neighbour above or below — which also reshuffles
+   * cost grouping (supplierCostByClientRow) and the qty-link set, since both
+   * are keyed by row position, not row identity. */
+  function moveRow(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= rows.length) return;
+    const reordered = [...rows];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    onChange(reordered);
+    setLinkedQtyRows((prev) => {
+      const wasLinked = prev.has(index);
+      const targetWasLinked = prev.has(target);
+      if (wasLinked === targetWasLinked) return prev;
+      const next = new Set(prev);
+      if (wasLinked) {
+        next.delete(index);
+        next.add(target);
+      } else {
+        next.delete(target);
+        next.add(index);
+      }
+      return next;
+    });
+  }
+
   /** Grows the sheet to at least `count` rows, returning the grown array. */
   function grownTo(current: SheetRow[], count: number): SheetRow[] {
     if (current.length >= count) return current;
@@ -539,6 +564,17 @@ export function JobSheetLinesGrid({
         focusCell(row, col);
       }
     };
+
+    if (e.altKey && e.key === "ArrowUp") {
+      e.preventDefault();
+      moveRow(rowIndex, -1);
+      return;
+    }
+    if (e.altKey && e.key === "ArrowDown") {
+      e.preventDefault();
+      moveRow(rowIndex, 1);
+      return;
+    }
 
     if (e.key === "ArrowDown") return move(rowIndex + 1, colAttr);
     if (e.key === "ArrowUp") return rowIndex > 0 ? move(rowIndex - 1, colAttr) : undefined;
@@ -652,9 +688,10 @@ export function JobSheetLinesGrid({
           this grid behaves the way a spreadsheet does. */}
       <p className="sheet-hint">
         Paste straight from Excel — description, qty and cost fill down from
-        wherever you are. Enter and the arrows move, Ctrl+D copies from above.
-        Click a row's number to link its client and expense quantities, so
-        editing either one updates both.
+        wherever you are. Enter and the arrows move, Ctrl+D copies from above,
+        Alt+↑/↓ (or the ▲▼ at the end of a row) reorders rows. Click a row's
+        number to link its client and expense quantities, so editing either
+        one updates both.
       </p>
 
       <div className="sheet-scroll">
@@ -836,10 +873,16 @@ export function JobSheetLinesGrid({
                       type="button"
                       className="sheet-copy-across"
                       tabIndex={-1}
-                      title="Use this as the client description too"
-                      onClick={() =>
-                        updateRow(index, { clientDescription: row.supplierDescription })
-                      }
+                      title="Use this as the client item too, quantity included"
+                      onClick={() => {
+                        updateRow(index, {
+                          clientDescription: row.supplierDescription,
+                          clientQty: row.supplierQty,
+                        });
+                        // Now the same item on both sides — keep their
+                        // quantities together going forward.
+                        setLinkedQtyRows((prev) => new Set(prev).add(index));
+                      }}
                     >
                       ←
                     </button>
@@ -884,16 +927,40 @@ export function JobSheetLinesGrid({
                   onChange={(e) => updateRow(index, { vendorName: e.target.value })}
                 />
 
-                <button
-                  type="button"
-                  className="sheet-remove"
-                  tabIndex={-1}
-                  aria-label={`Delete row ${index + 1}`}
-                  title="Delete this row"
-                  onClick={() => removeRow(index)}
-                >
-                  ×
-                </button>
+                <div className="sheet-row-actions">
+                  <button
+                    type="button"
+                    className="sheet-move"
+                    tabIndex={-1}
+                    disabled={index === 0}
+                    aria-label={`Move row ${index + 1} up`}
+                    title="Move this row up"
+                    onClick={() => moveRow(index, -1)}
+                  >
+                    ▲
+                  </button>
+                  <button
+                    type="button"
+                    className="sheet-move"
+                    tabIndex={-1}
+                    disabled={index === rows.length - 1}
+                    aria-label={`Move row ${index + 1} down`}
+                    title="Move this row down"
+                    onClick={() => moveRow(index, 1)}
+                  >
+                    ▼
+                  </button>
+                  <button
+                    type="button"
+                    className="sheet-remove"
+                    tabIndex={-1}
+                    aria-label={`Delete row ${index + 1}`}
+                    title="Delete this row"
+                    onClick={() => removeRow(index)}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
             );
           })}

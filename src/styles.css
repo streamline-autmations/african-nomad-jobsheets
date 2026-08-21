@@ -270,18 +270,18 @@ body {
 }
 
 .sheet-grid {
-  min-width: 1180px;
+  min-width: 1210px;
   font-size: 0.8rem;
 }
 
-/* 13 columns: gutter, six client, six supplier, delete. */
+/* 13 columns: gutter, six client, six supplier, row actions. */
 .sheet-row {
   display: grid;
   grid-template-columns:
     2.2rem
     minmax(9rem, 2.2fr) 4rem 6.2rem 5.4rem 6.2rem 4.4rem
     minmax(9rem, 2.2fr) 4rem 6.2rem 5.4rem 6.2rem minmax(6rem, 1.1fr)
-    1.75rem;
+    3.4rem;
 }
 
 .sheet-row > * {
@@ -518,6 +518,32 @@ button.sheet-gutter {
 .sheet-copy-across:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.sheet-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+}
+
+.sheet-move {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.55rem;
+  line-height: 1;
+  padding: 0.15rem;
+}
+
+.sheet-move:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.sheet-move:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .sheet-remove {
