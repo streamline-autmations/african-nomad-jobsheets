@@ -261,6 +261,10 @@ export async function markNsaQuoteAccepted(id: string): Promise<NsaQuote> {
   return toNsaQuote(data);
 }
 
+// Convertible from any stage short of already-invoiced — draft, sent or
+// accepted. A quote doesn't have to run the whole Sent -> Accepted ceremony
+// before it can be turned into an invoice; sometimes the client just says
+// "go ahead" and the paper trail catches up after the fact.
 export async function markNsaQuoteInvoiced(
   id: string,
   nsaInvoiceNumber: string,
@@ -274,7 +278,7 @@ export async function markNsaQuoteInvoiced(
       nsa_invoice_number: nsaInvoiceNumber,
     })
     .eq("id", id)
-    .eq("status", "accepted")
+    .in("status", ["draft", "sent", "accepted"])
     .select("*")
     .single();
   if (error) throw error;
