@@ -351,6 +351,28 @@ body {
   color: var(--accent);
 }
 
+/* The gutter doubles as a button on any row with both sides filled in, to
+   link the client and expense quantities together. */
+button.sheet-gutter {
+  width: 100%;
+  border: none;
+  padding: 0;
+  font: inherit;
+}
+
+.sheet-gutter-linkable {
+  cursor: pointer;
+}
+
+.sheet-gutter-linkable:hover {
+  color: var(--accent);
+}
+
+.sheet-gutter-linked {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .sheet-row-group,
 .sheet-row-head {
   position: sticky;

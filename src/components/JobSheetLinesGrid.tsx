@@ -352,8 +352,29 @@ export function JobSheetLinesGrid({
   // Set when a keystroke or paste adds rows, so focus can follow into a row
   // that doesn't exist yet at the time the key is handled.
   const pendingFocus = useRef<{ row: number; col: Col } | null>(null);
+  // Rows where the client and expense quantities are pinned together — the
+  // same powerbanks on both sides of the row, not two different things that
+  // happen to share a line. Not every row wants this: buying extra for
+  // wastage means the two sides *should* differ, so linking is a choice per
+  // row rather than a rule applied to every row that has both sides filled.
+  const [linkedQtyRows, setLinkedQtyRows] = useState<Set<number>>(new Set());
 
   const { costs: supplierCosts, ownerOf } = supplierCostByClientRow(rows);
+
+  function toggleQtyLink(index: number) {
+    const linking = !linkedQtyRows.has(index);
+    setLinkedQtyRows((prev) => {
+      const next = new Set(prev);
+      if (linking) next.add(index);
+      else next.delete(index);
+      return next;
+    });
+    // Bring the two quantities into agreement the moment they're linked,
+    // rather than leaving them mismatched until the next edit.
+    if (linking && rows[index].clientQty !== rows[index].supplierQty) {
+      updateRow(index, { supplierQty: rows[index].clientQty });
+    }
+  }
 
   // Autocomplete sources: every client line, every supplier line, and the
   // common-expenses list — kept separate so a suggestion from the *opposite*
@@ -632,6 +653,8 @@ export function JobSheetLinesGrid({
       <p className="sheet-hint">
         Paste straight from Excel — description, qty and cost fill down from
         wherever you are. Enter and the arrows move, Ctrl+D copies from above.
+        Click a row's number to link its client and expense quantities, so
+        editing either one updates both.
       </p>
 
       <div className="sheet-scroll">
@@ -676,21 +699,42 @@ export function JobSheetLinesGrid({
             // A cost belonging to no client line at all — an unbilled job
             // overhead. Counts in full towards the sheet's expenses.
             const isUnattributed = !rowHasClient(row) && rowHasSupplier(row) && ownerOf[index] < 0;
+            // Both sides carry the same item, so linking their quantities is
+            // offered — but only offered; wastage/spoilage means the two
+            // legitimately differ on plenty of rows.
+            const qtyLinkable = rowHasClient(row) && rowHasSupplier(row);
+            const qtyLinked = qtyLinkable && linkedQtyRows.has(index);
 
             return (
               <div className="sheet-row" key={row.id}>
-                <span
-                  className={`sheet-gutter${isRolledUp ? " sheet-gutter-rolled" : ""}`}
-                  title={
-                    isRolledUp
-                      ? `Costed against row ${ownerOf[index] + 1}. Leave a blank row above to separate it.`
-                      : isUnattributed
-                        ? "Counts towards expenses but not against any one line's mark-up"
-                        : undefined
-                  }
-                >
-                  {isRolledUp ? "↳" : index + 1}
-                </span>
+                {qtyLinkable ? (
+                  <button
+                    type="button"
+                    className={`sheet-gutter sheet-gutter-linkable${qtyLinked ? " sheet-gutter-linked" : ""}`}
+                    tabIndex={-1}
+                    title={
+                      qtyLinked
+                        ? "Quantities linked — editing either side updates both. Click to unlink."
+                        : "Click to keep this row's client and expense quantities in sync."
+                    }
+                    onClick={() => toggleQtyLink(index)}
+                  >
+                    {index + 1}
+                  </button>
+                ) : (
+                  <span
+                    className={`sheet-gutter${isRolledUp ? " sheet-gutter-rolled" : ""}`}
+                    title={
+                      isRolledUp
+                        ? `Costed against row ${ownerOf[index] + 1}. Leave a blank row above to separate it.`
+                        : isUnattributed
+                          ? "Counts towards expenses but not against any one line's mark-up"
+                          : undefined
+                    }
+                  >
+                    {isRolledUp ? "↳" : index + 1}
+                  </span>
+                )}
 
                 <DescriptionCell
                   value={row.clientDescription}
@@ -699,12 +743,18 @@ export function JobSheetLinesGrid({
                   ariaLabel={`Row ${index + 1} client description`}
                   suggestions={suggestionsFor("client", index)}
                   onChangeText={(text) => updateRow(index, { clientDescription: text })}
-                  onPick={(s) =>
+                  onPick={(s) => {
                     updateRow(index, {
                       clientDescription: s.description,
                       ...(s.qty !== null ? { clientQty: s.qty } : {}),
-                    })
-                  }
+                    });
+                    // Picked from the supplier side of this same sheet — the
+                    // two are now the same item, so keep their quantities
+                    // together going forward.
+                    if (s.qty !== null && row.supplierDescription.trim() !== "") {
+                      setLinkedQtyRows((prev) => new Set(prev).add(index));
+                    }
+                  }}
                 />
                 <NumberCell
                   className="num"
@@ -713,7 +763,9 @@ export function JobSheetLinesGrid({
                   col="clientQty"
                   value={row.clientQty}
                   blank={!rowHasClient(row)}
-                  onCommit={(v) => updateRow(index, { clientQty: v })}
+                  onCommit={(v) =>
+                    updateRow(index, qtyLinked ? { clientQty: v, supplierQty: v } : { clientQty: v })
+                  }
                 />
                 <NumberCell
                   className="num"
@@ -769,12 +821,15 @@ export function JobSheetLinesGrid({
                     ariaLabel={`Row ${index + 1} supplier item`}
                     suggestions={suggestionsFor("supplier", index)}
                     onChangeText={(text) => updateRow(index, { supplierDescription: text })}
-                    onPick={(s) =>
+                    onPick={(s) => {
                       updateRow(index, {
                         supplierDescription: s.description,
                         ...(s.qty !== null ? { supplierQty: s.qty } : {}),
-                      })
-                    }
+                      });
+                      if (s.qty !== null && row.clientDescription.trim() !== "") {
+                        setLinkedQtyRows((prev) => new Set(prev).add(index));
+                      }
+                    }}
                   />
                   {row.supplierDescription.trim() !== "" && row.clientDescription.trim() === "" && (
                     <button
@@ -797,7 +852,9 @@ export function JobSheetLinesGrid({
                   col="supplierQty"
                   value={row.supplierQty}
                   blank={!rowHasSupplier(row)}
-                  onCommit={(v) => updateRow(index, { supplierQty: v })}
+                  onCommit={(v) =>
+                    updateRow(index, qtyLinked ? { supplierQty: v, clientQty: v } : { supplierQty: v })
+                  }
                 />
                 <NumberCell
                   className="num"
