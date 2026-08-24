@@ -433,29 +433,99 @@ export function JobSheetLinesGrid({
     onChange(next.length > 0 ? next : [emptySheetRow()]);
   }
 
-  /** Swaps a row with its neighbour above or below — which also reshuffles
-   * cost grouping (supplierCostByClientRow) and the qty-link set, since both
-   * are keyed by row position, not row identity. */
-  function moveRow(index: number, direction: -1 | 1) {
-    const target = index + direction;
-    if (target < 0 || target >= rows.length) return;
-    const reordered = [...rows];
-    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
-    onChange(reordered);
+  /**
+   * Reorders one or both sides of the sheet independently — the client
+   * (customer-facing) column and the supplier/expense column can each be
+   * dragged into a new position on their own, exactly like cutting a row out
+   * of one list in Excel and pasting it further down, without touching the
+   * other list at all. Moving both together is a deliberate, explicit case
+   * (the Alt-drag), not the default, because most of the time reordering one
+   * side is *how* you fix which client line a cost is attributed to —
+   * supplierCostByClientRow attributes a cost to the client line above it by
+   * position, so dragging a cost under a different client line is exactly
+   * how you'd re-attribute it.
+   */
+  function moveRows(fromIndex: number, toIndex: number, sides: ReadonlyArray<"client" | "supplier">) {
+    if (fromIndex === toIndex || toIndex < 0 || toIndex >= rows.length) return;
+
+    const clientSlots = rows.map((r) => ({
+      clientLineId: r.clientLineId,
+      clientDescription: r.clientDescription,
+      clientQty: r.clientQty,
+      clientUnitCost: r.clientUnitCost,
+    }));
+    const supplierSlots = rows.map((r) => ({
+      supplierLineId: r.supplierLineId,
+      supplierDescription: r.supplierDescription,
+      supplierQty: r.supplierQty,
+      supplierUnitCost: r.supplierUnitCost,
+      vendorName: r.vendorName,
+    }));
+
+    function relocate<T>(list: T[]) {
+      const [moved] = list.splice(fromIndex, 1);
+      list.splice(toIndex, 0, moved);
+    }
+    if (sides.includes("client")) relocate(clientSlots);
+    if (sides.includes("supplier")) relocate(supplierSlots);
+
+    onChange(rows.map((row, i) => ({ ...row, ...clientSlots[i], ...supplierSlots[i] })));
+
+    // The qty-link set is keyed by row position and means "this position's
+    // client and supplier are the same item." Moving both sides together
+    // keeps that true, so the link travels with the row. Moving one side
+    // alone breaks it for every position the move touched — whatever used to
+    // sit opposite a linked item is now paired with something else.
+    const lo = Math.min(fromIndex, toIndex);
+    const hi = Math.max(fromIndex, toIndex);
     setLinkedQtyRows((prev) => {
-      const wasLinked = prev.has(index);
-      const targetWasLinked = prev.has(target);
-      if (wasLinked === targetWasLinked) return prev;
-      const next = new Set(prev);
-      if (wasLinked) {
-        next.delete(index);
-        next.add(target);
-      } else {
-        next.delete(target);
-        next.add(index);
+      if (sides.length === 2) {
+        const next = new Set<number>();
+        prev.forEach((i) => {
+          if (i < lo || i > hi) {
+            next.add(i);
+          } else if (i === fromIndex) {
+            next.add(toIndex);
+          } else {
+            next.add(fromIndex < toIndex ? i - 1 : i + 1);
+          }
+        });
+        return next;
       }
-      return next;
+      let changed = false;
+      const next = new Set(prev);
+      for (let i = lo; i <= hi; i++) {
+        if (next.delete(i)) changed = true;
+      }
+      return changed ? next : prev;
     });
+  }
+
+  /** One adjacent step — the keyboard shortcut's move, always both sides
+   * together since there's no drag gesture to say otherwise. */
+  function moveRow(index: number, direction: -1 | 1) {
+    moveRows(index, index + direction, ["client", "supplier"]);
+  }
+
+  // Drag-and-drop state doesn't need to be reactive — it only has to survive
+  // between a dragstart on one row's handle and a drop on another row.
+  const dragRef = useRef<{ index: number; side: "client" | "supplier" } | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  function handleDragStart(e: React.DragEvent, index: number, side: "client" | "supplier") {
+    dragRef.current = { index, side };
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox won't fire drag events at all unless data is actually set.
+    e.dataTransfer.setData("text/plain", String(index));
+  }
+
+  function handleDrop(e: React.DragEvent, toIndex: number) {
+    e.preventDefault();
+    setDragOverIndex(null);
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (!drag) return;
+    moveRows(drag.index, toIndex, e.altKey ? ["client", "supplier"] : [drag.side]);
   }
 
   /** Grows the sheet to at least `count` rows, returning the grown array. */
@@ -688,10 +758,12 @@ export function JobSheetLinesGrid({
           this grid behaves the way a spreadsheet does. */}
       <p className="sheet-hint">
         Paste straight from Excel — description, qty and cost fill down from
-        wherever you are. Enter and the arrows move, Ctrl+D copies from above,
-        Alt+↑/↓ (or the ▲▼ at the end of a row) reorders rows. Click a row's
-        number to link its client and expense quantities, so editing either
-        one updates both.
+        wherever you are. Enter and the arrows move, Ctrl+D copies from above.
+        Drag the ⠿ handle to reorder a client or expense item on its own —
+        hold Alt while dragging to move both sides of the row together
+        (Alt+↑/↓ does the same from the keyboard). Click a row's number to
+        link its client and expense quantities, so editing either one
+        updates both.
       </p>
 
       <div className="sheet-scroll">
@@ -743,7 +815,17 @@ export function JobSheetLinesGrid({
             const qtyLinked = qtyLinkable && linkedQtyRows.has(index);
 
             return (
-              <div className="sheet-row" key={row.id}>
+              <div
+                className={`sheet-row${dragOverIndex === index ? " sheet-row-drag-over" : ""}`}
+                key={row.id}
+                onDragOver={(e) => {
+                  if (!dragRef.current) return;
+                  e.preventDefault();
+                  if (dragOverIndex !== index) setDragOverIndex(index);
+                }}
+                onDragLeave={() => setDragOverIndex((cur) => (cur === index ? null : cur))}
+                onDrop={(e) => handleDrop(e, index)}
+              >
                 {qtyLinkable ? (
                   <button
                     type="button"
@@ -773,26 +855,39 @@ export function JobSheetLinesGrid({
                   </span>
                 )}
 
-                <DescriptionCell
-                  value={row.clientDescription}
-                  rowIndex={index}
-                  col="clientDescription"
-                  ariaLabel={`Row ${index + 1} client description`}
-                  suggestions={suggestionsFor("client", index)}
-                  onChangeText={(text) => updateRow(index, { clientDescription: text })}
-                  onPick={(s) => {
-                    updateRow(index, {
-                      clientDescription: s.description,
-                      ...(s.qty !== null ? { clientQty: s.qty } : {}),
-                    });
-                    // Picked from the supplier side of this same sheet — the
-                    // two are now the same item, so keep their quantities
-                    // together going forward.
-                    if (s.qty !== null && row.supplierDescription.trim() !== "") {
-                      setLinkedQtyRows((prev) => new Set(prev).add(index));
-                    }
-                  }}
-                />
+                <div className="sheet-desc-wrap">
+                  <span
+                    className="sheet-drag-handle"
+                    draggable
+                    role="button"
+                    tabIndex={-1}
+                    aria-label={`Drag row ${index + 1}'s client item to reorder`}
+                    title="Drag to move this client item — hold Alt to bring its expense line along"
+                    onDragStart={(e) => handleDragStart(e, index, "client")}
+                  >
+                    ⠿
+                  </span>
+                  <DescriptionCell
+                    value={row.clientDescription}
+                    rowIndex={index}
+                    col="clientDescription"
+                    ariaLabel={`Row ${index + 1} client description`}
+                    suggestions={suggestionsFor("client", index)}
+                    onChangeText={(text) => updateRow(index, { clientDescription: text })}
+                    onPick={(s) => {
+                      updateRow(index, {
+                        clientDescription: s.description,
+                        ...(s.qty !== null ? { clientQty: s.qty } : {}),
+                      });
+                      // Picked from the supplier side of this same sheet — the
+                      // two are now the same item, so keep their quantities
+                      // together going forward.
+                      if (s.qty !== null && row.supplierDescription.trim() !== "") {
+                        setLinkedQtyRows((prev) => new Set(prev).add(index));
+                      }
+                    }}
+                  />
+                </div>
                 <NumberCell
                   className="num"
                   ariaLabel={`Row ${index + 1} client quantity`}
@@ -851,6 +946,17 @@ export function JobSheetLinesGrid({
                 )}
 
                 <div className="sheet-supplier-desc">
+                  <span
+                    className="sheet-drag-handle"
+                    draggable
+                    role="button"
+                    tabIndex={-1}
+                    aria-label={`Drag row ${index + 1}'s expense item to reorder`}
+                    title="Drag to move this expense item — hold Alt to bring its client line along"
+                    onDragStart={(e) => handleDragStart(e, index, "supplier")}
+                  >
+                    ⠿
+                  </span>
                   <DescriptionCell
                     value={row.supplierDescription}
                     rowIndex={index}
@@ -927,40 +1033,16 @@ export function JobSheetLinesGrid({
                   onChange={(e) => updateRow(index, { vendorName: e.target.value })}
                 />
 
-                <div className="sheet-row-actions">
-                  <button
-                    type="button"
-                    className="sheet-move"
-                    tabIndex={-1}
-                    disabled={index === 0}
-                    aria-label={`Move row ${index + 1} up`}
-                    title="Move this row up"
-                    onClick={() => moveRow(index, -1)}
-                  >
-                    ▲
-                  </button>
-                  <button
-                    type="button"
-                    className="sheet-move"
-                    tabIndex={-1}
-                    disabled={index === rows.length - 1}
-                    aria-label={`Move row ${index + 1} down`}
-                    title="Move this row down"
-                    onClick={() => moveRow(index, 1)}
-                  >
-                    ▼
-                  </button>
-                  <button
-                    type="button"
-                    className="sheet-remove"
-                    tabIndex={-1}
-                    aria-label={`Delete row ${index + 1}`}
-                    title="Delete this row"
-                    onClick={() => removeRow(index)}
-                  >
-                    ×
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="sheet-remove"
+                  tabIndex={-1}
+                  aria-label={`Delete row ${index + 1}`}
+                  title="Delete this row"
+                  onClick={() => removeRow(index)}
+                >
+                  ×
+                </button>
               </div>
             );
           })}

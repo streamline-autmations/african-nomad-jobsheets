@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CompanySelect } from "./CompanySelect";
 import { CustomerSelect } from "./CustomerSelect";
 import { JobSheetLinesGrid } from "./JobSheetLinesGrid";
+import { JobSheetInternalDocument } from "./JobSheetInternalDocument";
 import { calculateJobSheetFinancials, withLineTotal } from "../lib/feeCalculations";
 import { linesToSheetRows, sheetRowsToLines, type SheetRow } from "../lib/jobSheetRows";
 import {
@@ -11,7 +12,7 @@ import {
   fetchJobSheetById,
   saveJobSheetDraft,
 } from "../lib/jobSheets";
-import type { CommonExpense, Company, Customer } from "../types";
+import type { CommonExpense, Company, Customer, JobSheet } from "../types";
 import { errorMessage } from "../lib/errors";
 import { SpotBidCheck } from "./SpotBidCheck";
 
@@ -47,6 +48,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showPrintPreview, setShowPrintPreview] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +108,43 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
       expenseLines: expenseLines.map(withLineTotal),
     });
   }, [selectedCompany, customerNameRaw, clientLines, expenseLines]);
+
+  // A print/download preview needs a full JobSheet shape, but this form
+  // works from loose draft state that may not be saved yet — so this fills
+  // in the fields a real saved row would have with drafty placeholders
+  // rather than requiring a save first just to see what it'll look like.
+  const draftJobSheet: JobSheet = useMemo(
+    () => ({
+      id: editingId ?? "draft",
+      companyId,
+      customerId: isNewCustomer ? null : customerId,
+      customerNameRaw,
+      jobDescription,
+      eventDate: eventDate || null,
+      status: "draft",
+      clientLines: clientLines.map(withLineTotal),
+      expenseLines: expenseLines.map(withLineTotal),
+      qbdEstimateTxnId: null,
+      qbdInvoiceTxnId: null,
+      nsaQuoteId: null,
+      createdAt: new Date().toISOString(),
+      approvedAt: null,
+      syncedAt: null,
+      ...financials,
+    }),
+    [
+      editingId,
+      companyId,
+      isNewCustomer,
+      customerId,
+      customerNameRaw,
+      jobDescription,
+      eventDate,
+      clientLines,
+      expenseLines,
+      financials,
+    ],
+  );
 
   function resetForm() {
     setCompanyId("");
@@ -286,14 +325,31 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
       {saveError && <div className="banner banner-error">{saveError}</div>}
       {saveMessage && <div className="banner banner-success">{saveMessage}</div>}
 
-      <button
-        type="button"
-        className="btn-primary"
-        disabled={saving}
-        onClick={handleSave}
-      >
-        {saving ? "Saving…" : editingId ? "Save changes" : "Save draft"}
-      </button>
+      <div className="form-actions">
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => setShowPrintPreview(true)}
+        >
+          Print / Download job sheet
+        </button>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={saving}
+          onClick={handleSave}
+        >
+          {saving ? "Saving…" : editingId ? "Save changes" : "Save draft"}
+        </button>
+      </div>
+
+      {showPrintPreview && (
+        <JobSheetInternalDocument
+          job={draftJobSheet}
+          companyName={selectedCompany?.name ?? ""}
+          onClose={() => setShowPrintPreview(false)}
+        />
+      )}
     </div>
   );
 }

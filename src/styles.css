@@ -270,18 +270,25 @@ body {
 }
 
 .sheet-grid {
-  min-width: 1210px;
+  min-width: 1180px;
   font-size: 0.8rem;
 }
 
-/* 13 columns: gutter, six client, six supplier, row actions. */
+/* 13 columns: gutter, six client, six supplier, delete. */
 .sheet-row {
   display: grid;
   grid-template-columns:
     2.2rem
     minmax(9rem, 2.2fr) 4rem 6.2rem 5.4rem 6.2rem 4.4rem
     minmax(9rem, 2.2fr) 4rem 6.2rem 5.4rem 6.2rem minmax(6rem, 1.1fr)
-    3.4rem;
+    1.75rem;
+}
+
+/* The whole row is a drop target — a dashed outline says "let go here"
+   without any of the sheet's usual stillness rule bending for it. */
+.sheet-row-drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
 }
 
 .sheet-row > * {
@@ -520,30 +527,38 @@ button.sheet-gutter {
   border-color: var(--accent);
 }
 
-.sheet-row-actions {
+/* Wraps the client description the same way .sheet-supplier-desc already
+   wraps the supplier one, so both can carry a drag handle. */
+.sheet-desc-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.sheet-desc-wrap .sheet-desc-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet-drag-handle {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.1rem;
-}
-
-.sheet-move {
-  border: none;
-  background: transparent;
+  width: 0.9rem;
   color: var(--text-muted);
-  cursor: pointer;
-  font-size: 0.55rem;
-  line-height: 1;
-  padding: 0.15rem;
+  font-size: 0.65rem;
+  cursor: grab;
+  user-select: none;
 }
 
-.sheet-move:hover:not(:disabled) {
+.sheet-drag-handle:hover {
   color: var(--accent);
 }
 
-.sheet-move:disabled {
-  opacity: 0.25;
-  cursor: default;
+.sheet-drag-handle:active {
+  cursor: grabbing;
 }
 
 .sheet-remove {
@@ -735,6 +750,12 @@ button.sheet-gutter {
 .banner-warning {
   background: var(--warning-bg);
   color: var(--warning);
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 
 .btn-primary,
