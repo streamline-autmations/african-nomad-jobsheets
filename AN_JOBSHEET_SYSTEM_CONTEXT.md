@@ -181,19 +181,92 @@ supplier_bills (
 Given a job sheet's `company_id`, `customer_id`, and computed `gross_profit`:
 
 - **If Company = African Nomad:**
+  - Sibanye Stillwater jobs carry a **2.5% rebate**, a cost AN pays for their early/30-day payment. It is **2.5% of the VAT-INCLUSIVE client total**, and it comes off before the 10% fee below.
   - `nsa_fee = gross_profit * 0.10` (always, since work is contracted through NSA — see "The NSA relationship" above)
-  - Sibanye Stillwater gets a **2.5% discount on their invoice total** (their 30-day payment term earns them a real discount, not an internal-only cost to AN)
 - **If Company = Tuscany SA:**
   - `tuscany_fee = gross_profit * 0.10` (goes to the silent partner)
 - Fees are mutually exclusive by company — a job sheet is never both African Nomad and Tuscany SA.
-- `total_fees = nsa_fee + tuscany_fee` (Sibanye's discount is not a "fee" in this sum — see correction below)
-- `net_profit = gross_profit - total_fees`
+- No fee is charged on a loss: the 10% is taken on `max(0, gross_profit)`, never on a negative.
 
-This exact logic was already validated in an Excel bridge template (zero formula errors, tested with sample African Nomad + Sibanye Stillwater data). Match it precisely — this is not up for creative reinterpretation.
+The full cascade, in order:
 
-> **Fixed 2026-07-20** (was previously an internal-only profit deduction that never touched `clientTotal` — Christiaan confirmed that was wrong). `sibanyeFee` is renamed `sibanyeDiscount` throughout: `src/lib/feeCalculations.ts`, `types.ts`, `jobSheets.ts`, the `job_sheets.sibanye_discount` column (migration `202607200001_sibanye_discount_fix.sql`, applied to the live `wnsjzxotknadqvznnijw` project), and the `discount_amount` field now carried in the `create_estimate`/`create_invoice` queue payload. Christiaan confirmed VAT is 15% "on everything" — the discount is applied to `clientSubtotal` **before** VAT (VAT computed on the discounted subtotal), and only when Company = African Nomad (matches the prior scoping — Tuscany SA never gets it, even for that customer). The QBD Bridge (`bridge/src/qbxml/builders.ts`, `session.ts`) now emits a negative-rate discount line (item name from `QBD_DISCOUNT_ITEM_NAME`, default `"Sibanye Discount"`) before the VAT line, so the real Estimate/Invoice total in QBD reflects it too. All frontend and bridge tests updated and passing.
+```
+clientSubtotal   = SUM(client lines)                       Excel G52 / G64
+vatAmount        = clientSubtotal * 15%                     Excel G55 / G67
+clientTotal      = clientSubtotal * 1.15                    Excel G56 / G68  <- what the client pays
+expenseTotal     = SUM(supplier lines)
+sibanyeRebate    = clientTotal * 2.5%                       Excel "Sibanye 2.5%" row
+grossProfit      = clientSubtotal - expenseTotal - sibanyeRebate
+nsaFee/tuscanyFee= max(0, grossProfit) * 10%                Excel "NSA 10%" row
+netProfit        = grossProfit - fees                       Excel Q53 / Q65 "Profit:"
+netMarginPct     = netProfit / clientSubtotal               Excel Q54 / Q66 "Profit Margin"
+totalCosts       = expenseTotal + sibanyeRebate + fees      Excel Q52 / Q64 "Total Expenses:"
+```
 
-**Target margin:** informal target of 20%+ gross margin (not a hard rule, just a flag/indicator in the UI — do not block saving a job sheet that falls below it, just surface it visually).
+> **Corrected 2026-08-19 — this REVERSES the 2026-07-20 entry below.** The Sibanye 2.5%
+> is **a cost AN carries, not a discount off the client's invoice**. Sibanye is billed the
+> full subtotal plus VAT; nothing is deducted before VAT; the 2.5% sits inside company
+> expenses and is calculated on the VAT-inclusive total.
+>
+> Evidence: the two real Excel job sheets in the repo root
+> (`Jobsheet 2pc travel bag + backpack.xlsx`, `Jobsheet Rowland Cup a Soup project.xlsx`)
+> were parsed in full for the first time. Both put "Sibanye 2.5%" as a row inside
+> SUPPLIER ITEMS, computed as `=G56*0.025` / `=G68*0.025` — i.e. on the incl-VAT total —
+> and both invoice the client the undiscounted subtotal. The decoded cascade above
+> reproduces **both workbooks to the cent**, including their literal hardcoded NSA-fee
+> cells (`P14` = 5,290.83 and `P27` = 3,674.54), which only reconcile if the rebate comes
+> off *before* the 10% is taken. The real NSA paperwork agrees: `Invoice NSA06384` and
+> `Quote 1291` both print `Subtotal -> VAT @ 15% on <full subtotal> -> Total` with no
+> discount row, and every live `nsa_quotes` row already has `discount_amount = 0`.
+> Christiaan confirmed on 2026-08-19, shown both worked totals side by side
+> (R142,135.26 old vs **R145,779.75** new, on the real Cup-a-Soup job).
+>
+> Changes: `SIBANYE_DISCOUNT_RATE` -> `SIBANYE_REBATE_RATE`, `sibanyeDiscountRateFor` ->
+> `sibanyeRebateRateFor`, `applyDiscountAndVat` -> `applyVat`, `sibanyeDiscount` ->
+> `sibanyeRebate`, new `totalCosts` field. `calculateNsaQuoteTotals` no longer accepts a
+> discount at all. Migration `202608190001_sibanye_rebate_as_cost.sql` zeroes
+> `discount_amount` in the estimate/invoice/quote payloads, restates every **draft**
+> job sheet, and blocks invoicing a pre-2026-08-19 sheet whose stored total no longer
+> reconciles. The DB column keeps the name `job_sheets.sibanye_discount` (renaming it
+> would ripple through five RPCs); its meaning changed, and there is a `COMMENT ON COLUMN`
+> saying so. The two Excel workbooks are pinned as test fixtures in
+> `src/lib/feeCalculations.test.ts` — those two tests are the acceptance criteria for any
+> future change to this cascade.
+
+> **Superseded — Fixed 2026-07-20** (was previously an internal-only profit deduction that never touched `clientTotal`). `sibanyeFee` was renamed `sibanyeDiscount` throughout and applied to `clientSubtotal` **before** VAT. **This reading was wrong** — see the 2026-08-19 correction above. Kept for history because migrations `202607200001_sibanye_discount_fix.sql` and `202608090002_nsa_quote_discount.sql` are still in the migration chain.
+
+**Margin:** the sheet shows the real margin and nothing else. There is no target, threshold,
+flag or warning — Christiaan removed it 2026-08-19 ("I just want to see the real margin…
+leave that out, it's clutter"). `MARGIN_TARGET_PCT` and `belowMarginTarget` no longer exist.
+
+---
+
+## The Job Sheet is a spreadsheet, deliberately
+
+The team has costed every job of their careers in an Excel job sheet and is not going to
+stop thinking in one. `JobSheetLinesGrid.tsx` reproduces it: two independent column blocks
+side by side (CLIENT / COMPANY EXPENSES) sharing row numbers but not content, contiguous
+cell borders, a sticky header, a row-number gutter, and Excel keyboard behaviour
+(Enter/arrows to move, Tab to continue into a new row, Ctrl+D to fill down, and paste of a
+tab-delimited block straight out of Excel). Nothing on the grid animates.
+
+Row model (`src/lib/jobSheetRows.ts`): a `SheetRow` is one row number with an optional
+client side and an optional supplier side, each with its own description and quantity. One
+client line can be backed by several supplier lines — a jacket line sits above the jacket,
+its branding and its delivery — and a client row owns every supplier row beneath it until
+the next client row **or a blank row**. The blank-row terminator matters: without it the
+Cup-a-Soup sheet's trailing unbilled costs (issuing system, casual, accommodation) all pile
+onto the last Delivery line and report it at -2420% margin. Rows that roll up are marked
+with `↳` in the gutter so the grouping is visible rather than inferred.
+
+Persistence is unchanged: `job_sheets.client_lines` and `expense_lines` are still two
+separate jsonb arrays. Each line now carries an optional `row` number so the two columns
+line up again on reload; lines without one (pre-2026-08-19, or a job sheet converted from
+an NSA quote) fall back to the old shared-id pairing.
+
+Deliberately **not** carried over from the Excel: the promoter/days/hours/stores columns
+(empty in both real sheets), the Management Fee line (also empty in both), Invoiced Unit
+Cost, the 30-day/COD expense split, and Margin Diff %.
 
 ---
 

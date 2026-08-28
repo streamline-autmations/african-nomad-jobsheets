@@ -166,6 +166,12 @@ export function NsaQuoteDocument({ quote, docType, onClose }: NsaQuoteDocumentPr
               <span>Subtotal</span>
               <span>{formatMoney(quote.subtotal)}</span>
             </div>
+            {/* Historical quotes (pre-2026-08-19) may carry a stored discount.
+                Their VAT was charged on the reduced amount, so the base named
+                here still has to be the discounted subtotal or the document
+                misstates its own arithmetic. Every new quote stores 0, so on
+                anything raised today this is simply the subtotal and no
+                discount row prints — matching the real NSA paperwork. */}
             {quote.discountAmount > 0 && (
               <div>
                 <span>Discount</span>
@@ -173,9 +179,6 @@ export function NsaQuoteDocument({ quote, docType, onClose }: NsaQuoteDocumentPr
               </div>
             )}
             <div>
-              {/* VAT is charged on the discounted amount, so the base named
-                  here must be the discounted subtotal — not quote.subtotal,
-                  which would misstate the calculation on a discounted quote. */}
               <span>
                 VAT @ 15% on {formatMoney(round2(quote.subtotal - quote.discountAmount))}
               </span>

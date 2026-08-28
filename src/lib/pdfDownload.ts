@@ -8,7 +8,13 @@
 // most page loads never touch a document view at all. Dynamic import keeps
 // it out of the main chunk entirely, fetched only when someone actually
 // clicks Download.
-export async function downloadElementAsPdf(element: HTMLElement, filename: string): Promise<void> {
+export async function downloadElementAsPdf(
+  element: HTMLElement,
+  filename: string,
+  // The internal job sheet is two column blocks wide; portrait squeezes it to
+  // the point of uselessness. Client-facing documents stay portrait.
+  orientation: "portrait" | "landscape" = "portrait",
+): Promise<void> {
   const { default: html2pdf } = await import("html2pdf.js");
   await html2pdf()
     .set({
@@ -16,7 +22,7 @@ export async function downloadElementAsPdf(element: HTMLElement, filename: strin
       filename,
       image: { type: "jpeg", quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      jsPDF: { unit: "mm", format: "a4", orientation },
     })
     .from(element)
     .save();

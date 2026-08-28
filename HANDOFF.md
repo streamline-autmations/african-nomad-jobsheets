@@ -1,19 +1,115 @@
 # Handoff — read this first in a new session
 
-Status as of **2026-08-19**. Working log, not finished documentation — update
-it as things move. `AN_JOBSHEET_SYSTEM_CONTEXT.md` in this repo root covers
-architecture/business rules; this file covers *where we actually are now*.
+Status as of **2026-08-19 (second session)**. Working log, not finished
+documentation — update it as things move. `AN_JOBSHEET_SYSTEM_CONTEXT.md` in
+this repo root covers architecture/business rules; this file covers *where we
+actually are now*.
 
-**Two separate plans exist for this repo — don't conflate their phase
-numbers:**
-1. **Sourcing-merge plan** (`C:\Users\User\.claude\plans\ok-so-you-knwoi-dreamy-engelbart.md`)
-   — folding the standalone Sourcing Engine app into this repo. **Parked**,
-   not touched in the 2026-08-19 session — Christiaan explicitly said to
-   ignore procurement/sourcing/dashboards/QBO/unrelated-UI this round.
+**Three plans now exist for this repo — don't conflate their phase numbers:**
+1. **Job Sheet Excel rebuild** (`C:\Users\User\.claude\plans\jiggly-growing-corbato.md`)
+   — **the current active track.** Make the Job Sheet look and work like the
+   team's real Excel job sheet, and fix the financial cascade to match it.
+   Phases 1–3 are **done**; see below.
 2. **Production-readiness plan** (`C:\Users\User\.claude\plans\sunny-juggling-rossum.md`)
-   — the **current active track**: make Job Sheet → NSA Quote → Approval →
-   Invoice → QuickBooks Desktop solid and correct. This is what the rest of
-   this file is about.
+   — Phases 0–2 done. **Phase 3 (Quote → Invoice / QuickBooks
+   duplicate-protection) onwards is paused**, not abandoned; resume after the
+   Job Sheet track lands.
+3. **Sourcing-merge plan** (`C:\Users\User\.claude\plans\ok-so-you-knwoi-dreamy-engelbart.md`)
+   — parked.
+
+---
+
+## 🔴 READ THIS FIRST: the Sibanye 2.5% reversed meaning
+
+**The 2.5% is now a COST African Nomad carries, not a discount off the
+client's invoice.** This reverses the 2026-07-20 decision that is still
+described in older parts of this file and in two migrations.
+
+- Sibanye is invoiced the **full subtotal plus VAT**. Nothing is deducted
+  before VAT. No discount line appears on anything the mine sees.
+- The 2.5% is calculated on the **VAT-INCLUSIVE** client total and sits inside
+  company expenses.
+- It comes off **before** the NSA/Tuscany 10% is worked out.
+
+Why: the two real Excel workbooks in the repo root were parsed in full for the
+first time. Both put "Sibanye 2.5%" as a supplier row computed on the incl-VAT
+total, and the decoded cascade reproduces **both workbooks to the cent** —
+including their hardcoded NSA-fee cells (`P14` = 5,290.83, `P27` = 3,674.54),
+which only reconcile if the rebate is deducted before the 10%. The real NSA
+paperwork agrees (`Invoice NSA06384`, `Quote 1291`: plain subtotal → VAT on the
+full subtotal → total, no discount row), and every live `nsa_quotes` row already
+has `discount_amount = 0`. Christiaan confirmed on 2026-08-19 after being shown
+both worked totals side by side (R142,135.26 old vs **R145,779.75** new).
+
+**Both Excel workbooks are pinned as test fixtures** in
+`src/lib/feeCalculations.test.ts`. Those two tests are the acceptance criteria
+for any future change to the cascade — if they pass, the app agrees with the
+spreadsheet.
+
+### ✅ The migration IS applied to the live database
+
+`supabase/migrations/202608190001_sibanye_rebate_as_cost.sql` was applied to
+`wnsjzxotknadqvznnijw` on 2026-08-19 with Christiaan's go-ahead, and verified
+afterwards:
+
+- All **4 drafts restated** and every one reconciles
+  (`client_total = round(subtotal + round(subtotal*0.15,2), 2)`). The Rustenburg
+  draft moved from a stored total of R405,612.19 to **R416,012.50**, with the
+  2.5% now showing as a R10,400.31 cost rather than a discount.
+- `approve_job_sheet` and `convert_job_sheet_to_invoice` both send
+  `discount_amount = 0`; `create_nsa_quote_from_job_sheet` writes `0` onto the
+  quote. Confirmed by reading `pg_get_functiondef` back off the live database.
+- `convert_job_sheet_to_invoice` carries the reconciliation guard that refuses
+  to invoice a pre-cutover sheet whose stored total no longer adds up.
+
+The 8 approved/synced sheets are deliberately **not** restated — they already
+sent QuickBooks their old numbers. All of them are test data and none has ever
+been invoiced, so the guard is defensive rather than load-bearing.
+
+---
+
+## Job Sheet Excel rebuild — what landed
+
+**Phase 1 (financial cascade) — DONE.** `feeCalculations.ts` rewritten to the
+decoded Excel cascade. `SIBANYE_DISCOUNT_RATE` → `SIBANYE_REBATE_RATE`,
+`sibanyeDiscountRateFor` → `sibanyeRebateRateFor`, `applyDiscountAndVat` →
+`applyVat`, `sibanyeDiscount` → `sibanyeRebate`, new `totalCosts` field.
+`MARGIN_TARGET_PCT` and `belowMarginTarget` **deleted** — Christiaan wanted the
+real margin shown and every target/warning removed as clutter. Two Codex-found
+fixes also landed: no fee is charged on a loss (`max(0, grossProfit)`), and
+`round2` now rounds symmetrically on negatives.
+
+**Phase 2 (the grid) — DONE.** `PairedLineItemsTable.tsx` and
+`pairedLineItems.ts` deleted; replaced by `JobSheetLinesGrid.tsx` +
+`jobSheetRows.ts`. Two independent column blocks side by side sharing row
+numbers, contiguous cell borders, sticky header, row-number gutter, and real
+Excel keyboard behaviour: Enter/arrows to move, Tab continues into a new row,
+Ctrl+D fills down, and **paste of a tab-delimited block straight out of Excel**
+(grows the sheet as needed). One client line can be backed by several supplier
+lines; a client row owns supplier rows beneath it until the next client row
+**or a blank row**. That blank-row terminator is load-bearing: without it the
+Cup-a-Soup sheet's trailing unbilled costs pile onto the last Delivery line and
+report it at -2420% margin. Rows that roll up are marked `↳` in the gutter.
+
+**Phase 3 (internal print view) — DONE.** New
+`JobSheetInternalDocument.tsx`, reachable from History via "Print job sheet".
+Landscape A4, both column blocks, supplier names, fee lines, profit and margin.
+Distinct from the client-facing `JobSheetDocument.tsx`, which is unchanged apart
+from losing its discount row.
+
+**Verified live in the browser, not just unit-tested.** The real Cup-a-Soup job
+pasted into the grid produces Sub Total R126,765.00 · Vat R19,014.75 · Total
+R145,779.75 · Total Expenses R93,694.17 · Profit R33,070.83 · Profit Margin
+26.09% — every figure matching the workbook. Sibanye 2.5% renders R3,644.49 and
+NSA 10% R3,674.54, both literal cell values from that sheet. 159 tests passing,
+`tsc --noEmit` clean, `npm run build` clean.
+
+**Still to verify:** a real save → reload round-trip against Supabase. The row
+model's round-trip is unit-tested (including legacy shared-id rows and
+NSA-quote conversions) but was not exercised against the live database, because
+`job_sheets` has no anon DELETE policy and a test row could not be cleaned up.
+
+---
 
 ---
 

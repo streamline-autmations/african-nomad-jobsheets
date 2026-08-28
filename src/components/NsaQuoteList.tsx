@@ -210,7 +210,7 @@ export function NsaQuoteList() {
               </button>
             )}
 
-            {selected.status === "accepted" && (
+            {selected.status !== "invoiced" && (
               <>
                 <input
                   type="text"
@@ -224,7 +224,7 @@ export function NsaQuoteList() {
                   disabled={busy}
                   onClick={() => handleMarkInvoiced(selected)}
                 >
-                  Flip to Invoice
+                  Convert to Invoice
                 </button>
               </>
             )}

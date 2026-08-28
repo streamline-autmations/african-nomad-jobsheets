@@ -137,15 +137,13 @@ export function JobSheetDocument({ job, companyName, onClose }: JobSheetDocument
           )}
 
           <div className="nsa-doc-totals">
-            {job.sibanyeDiscount > 0 && (
-              <div>
-                <span>Sibanye discount (2.5%)</span>
-                <span>- {formatMoney(job.sibanyeDiscount)}</span>
-              </div>
-            )}
+            {/* No discount row: Sibanye's 2.5% is a cost AN carries, not a
+                reduction of what the client is billed. Matches the real NSA
+                paperwork, which prints subtotal -> VAT -> total and nothing
+                else. See feeCalculations.SIBANYE_REBATE_RATE. */}
             <div>
               <span>Subtotal</span>
-              <span>{formatMoney(job.clientSubtotal - job.sibanyeDiscount)}</span>
+              <span>{formatMoney(job.clientSubtotal)}</span>
             </div>
             <div>
               <span>VAT @ 15%</span>

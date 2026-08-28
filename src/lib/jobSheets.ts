@@ -1,5 +1,5 @@
 import { supabase, supabaseConfigured } from "./supabase";
-import { calculateJobSheetFinancials } from "./feeCalculations";
+import { calculateJobSheetFinancials, round2 } from "./feeCalculations";
 import type {
   CommonExpense,
   Company,
@@ -64,10 +64,17 @@ function toJobSheet(row: JobSheetRow): JobSheet {
     clientLines: row.client_lines ?? [],
     expenseLines: row.expense_lines ?? [],
     clientSubtotal: Number(row.client_subtotal),
-    sibanyeDiscount: Number(row.sibanye_discount),
+    // job_sheets.sibanye_discount keeps its original column name but now holds
+    // a rebate AN pays, not a discount off the client's invoice — see
+    // feeCalculations.SIBANYE_REBATE_RATE. Rows written before 2026-08-19
+    // carry the old meaning and are not restated on read.
+    sibanyeRebate: Number(row.sibanye_discount),
     vatAmount: Number(row.vat_amount),
     clientTotal: Number(row.client_total),
     expenseTotal: Number(row.expense_total),
+    totalCosts: round2(
+      Number(row.expense_total) + Number(row.sibanye_discount) + Number(row.total_fees),
+    ),
     grossProfit: Number(row.gross_profit),
     profitMarginPct: Number(row.profit_margin_pct),
     nsaFee: Number(row.nsa_fee),
@@ -75,7 +82,6 @@ function toJobSheet(row: JobSheetRow): JobSheet {
     totalFees: Number(row.total_fees),
     netProfit: Number(row.net_profit),
     netMarginPct: Number(row.net_margin_pct),
-    belowMarginTarget: Number(row.profit_margin_pct) < 20,
     qbdEstimateTxnId: row.qbd_estimate_txn_id,
     qbdInvoiceTxnId: row.qbd_invoice_txn_id,
     nsaQuoteId: row.nsa_quote_id,
@@ -170,7 +176,7 @@ export interface SaveJobSheetDraftInput {
 function financialsToRow(financials: JobSheetFinancials) {
   return {
     client_subtotal: financials.clientSubtotal,
-    sibanye_discount: financials.sibanyeDiscount,
+    sibanye_discount: financials.sibanyeRebate,
     vat_amount: financials.vatAmount,
     client_total: financials.clientTotal,
     expense_total: financials.expenseTotal,
@@ -402,7 +408,7 @@ export async function createJobSheetFromNsaQuote(
     p_event_date: input.eventDate,
     p_client_lines: input.clientLines,
     p_client_subtotal: f.clientSubtotal,
-    p_sibanye_discount: f.sibanyeDiscount,
+    p_sibanye_discount: f.sibanyeRebate,
     p_vat_amount: f.vatAmount,
     p_client_total: f.clientTotal,
     p_expense_total: f.expenseTotal,
@@ -416,6 +422,43 @@ export async function createJobSheetFromNsaQuote(
   });
   if (error) throw error;
   return toJobSheet(data as JobSheetRow);
+}
+
+// Photos attached to individual line items — the actual item, not a general
+// job-sheet attachment. Lives in the same private bucket as job_sheet_files,
+// under its own prefix, keyed by the row's own client-generated id rather
+// than the job sheet's id: a brand-new draft has no job sheet id yet (it
+// isn't saved until the form's Save button is pressed), but every row always
+// has one from the moment it exists on the grid.
+const LINE_PHOTO_PREFIX = "line-photos";
+
+export async function uploadLineItemPhoto(rowId: string, file: File): Promise<string> {
+  const client = requireSupabase();
+  const storagePath = `${LINE_PHOTO_PREFIX}/${rowId}/${crypto.randomUUID()}-${file.name}`;
+  const { error } = await client.storage
+    .from(JOB_SHEET_FILES_BUCKET)
+    .upload(storagePath, file, { contentType: file.type || undefined });
+  if (error) throw error;
+  return storagePath;
+}
+
+// Longer-lived than getJobSheetFileDownloadUrl's 60s: a line photo is meant
+// to stay visible on-screen (grid thumbnail) and load into a print/PDF
+// preview that can sit open for a while, not just trigger one immediate
+// download.
+export async function getLineItemPhotoUrl(storagePath: string): Promise<string> {
+  const client = requireSupabase();
+  const { data, error } = await client.storage
+    .from(JOB_SHEET_FILES_BUCKET)
+    .createSignedUrl(storagePath, 3600);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+export async function deleteLineItemPhoto(storagePath: string): Promise<void> {
+  const client = requireSupabase();
+  const { error } = await client.storage.from(JOB_SHEET_FILES_BUCKET).remove([storagePath]);
+  if (error) throw error;
 }
 
 export async function deleteJobSheetFile(id: string, storagePath: string): Promise<void> {

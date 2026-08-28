@@ -31,6 +31,13 @@ body {
   padding: 1rem;
 }
 
+/* The job sheet is a spreadsheet — 960px cannot hold the CLIENT and COMPANY
+   EXPENSES blocks side by side, and splitting them stops it being the sheet
+   staff recognise. */
+.app-shell-wide {
+  max-width: 1500px;
+}
+
 .app-header {
   display: flex;
   flex-wrap: wrap;
@@ -103,7 +110,6 @@ body {
 
 .field input:focus,
 .field select:focus,
-.paired-row input:focus,
 .line-items-row input:focus {
   outline: none;
   border-color: var(--accent);
@@ -204,175 +210,597 @@ body {
   width: 100%;
 }
 
-/* Paired client/supplier line items — mirrors the real spreadsheet's
-   side-by-side layout (client price and supplier cost on the same row). */
-.paired-table {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+/* ---------------------------------------------------------------------------
+   The job sheet grid.
+
+   Reproduces the team's Excel job sheet: two column blocks side by side
+   (CLIENT / COMPANY EXPENSES) sharing row numbers, contiguous cell borders, a
+   sticky header, and a row-number gutter. Nothing here animates — for a
+   spreadsheet, stillness is the point, and the only thing that moves is the
+   cell cursor.
+   --------------------------------------------------------------------------- */
+.sheet {
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
 
-.paired-row {
-  display: grid;
-  grid-template-columns: 1.4fr 2.8fr 3.6fr 0.7fr auto;
-  gap: 0.75rem;
+.sheet-toolbar {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  padding: 0.4rem 0;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
   border-bottom: 1px solid var(--border);
 }
 
-.paired-row-head {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border-bottom: 2px solid var(--border);
-  align-items: end;
-  padding-bottom: 0.5rem;
-}
-
-.paired-row > input {
-  padding: 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  width: 100%;
-}
-
-.paired-cell {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.35rem;
-  align-items: center;
-  border-radius: 6px;
-  padding: 0.35rem;
-}
-
-.paired-client-cell {
-  grid-template-columns: repeat(4, 1fr);
-  background: #eef3f7;
-}
-
-.paired-supplier-cell {
-  grid-template-columns: repeat(5, 1fr);
-  background: #f7f1ea;
-}
-
-.paired-cell input {
-  padding: 0.3rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  width: 100%;
-  min-width: 0;
-  background: var(--surface);
-}
-
-.paired-cell .line-total {
-  font-size: 0.85rem;
-  text-align: right;
-}
-
-.paired-cell-head {
-  background: transparent;
-  padding: 0.35rem 0.35rem 0;
-}
-
-.paired-group-label {
-  grid-column: 1 / -1;
-  font-size: 0.68rem;
-  font-weight: 600;
-  color: var(--text);
-  text-transform: none;
-  letter-spacing: normal;
-  margin-bottom: 0.3rem;
-}
-
-.paired-cell-head span:not(.paired-group-label) {
-  text-align: center;
-}
-
-.paired-markup {
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
-/* The markup cell is an input wherever the line has a supplier cost to price
-   from, and plain text where it doesn't. Styled to sit at the same weight as
-   the text version so the column doesn't jump between the two states. */
-.paired-markup-input {
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  padding: 0.4rem 0.25rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  width: 100%;
-  background: var(--surface);
-}
-
-.paired-markup-input.margin-flag {
-  color: var(--warning);
-  border-color: var(--warning);
-}
-
-.bulk-markup {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 0.85rem;
-}
-
-.bulk-markup-input {
-  width: 4.5rem;
-  padding: 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.bulk-markup-note {
-  color: var(--text-muted);
-  flex: 1 1 20ch;
-  min-width: 20ch;
-}
-
-/* The job sheet -> NSA quote hand-off. Boxed off from the approve/edit
-   actions below it, because it's a different kind of decision: this produces
-   the document the mine sees, approving produces the QuickBooks entries. */
-.nsa-handoff {
-  margin: 1rem 0;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.nsa-handoff h4 {
-  margin: 0 0 0.25rem;
+.sheet-toolbar h3 {
+  margin: 0;
   font-size: 0.95rem;
 }
 
-.nsa-handoff-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
-  gap: 0.75rem;
-  margin: 0.75rem 0;
-}
-
-.paired-subtotals {
+.sheet-toolbar-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 2rem;
-  margin-top: 0.5rem;
-  font-size: 0.9rem;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
 }
 
-.paired-subtotals strong {
+.sheet-bulk-input {
+  width: 4.5rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
   font-variant-numeric: tabular-nums;
-  margin-left: 0.35rem;
+  text-align: right;
+}
+
+.sheet-hint {
+  margin: 0;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.sheet-scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.sheet-grid {
+  min-width: 1180px;
+  font-size: 0.8rem;
+}
+
+/* 13 columns: gutter, six client, six supplier, actions (photos + delete). */
+.sheet-row {
+  display: grid;
+  grid-template-columns:
+    2.2rem
+    minmax(9rem, 2.2fr) 4rem 6.2rem 5.4rem 6.2rem 4.4rem
+    minmax(9rem, 2.2fr) 4rem 6.2rem 5.4rem 6.2rem minmax(6rem, 1.1fr)
+    3.2rem;
+}
+
+/* Sits between every pair of rows (and after the last one) — a thin strip
+   that reveals a "+" on hover, for dropping a new line exactly where it's
+   needed rather than only ever at the end of the sheet. */
+.sheet-row-insert {
+  height: 0.55rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sheet-insert-btn {
+  width: 1.1rem;
+  height: 1.1rem;
+  line-height: 1;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.sheet-row-insert:hover .sheet-insert-btn,
+.sheet-insert-btn:focus-visible {
+  opacity: 1;
+}
+
+.sheet-insert-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The whole row is a drop target — a dashed outline says "let go here"
+   without any of the sheet's usual stillness rule bending for it. */
+.sheet-row-drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+.sheet-row > * {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.sheet-row > *:last-child {
+  border-right: none;
+}
+
+/* Cells are the grid. No gaps, no rounding, no individual boxes — an input
+   that looks like a form field reads as a form, not as a spreadsheet. */
+.sheet-row input {
+  width: 100%;
+  height: 1.85rem;
+  padding: 0 0.35rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}
+
+.sheet-row input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--surface);
+  position: relative;
+  z-index: 1;
+}
+
+.sheet-row .num,
+.sheet-total,
+.sheet-markup {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.sheet-row input.derived {
+  color: var(--text-muted);
+}
+
+/* The two column blocks, tinted the way the spreadsheet tints them. */
+.sheet-row > *:nth-child(n + 2):nth-child(-n + 7) {
+  background: #eef3f7;
+}
+
+.sheet-row > *:nth-child(n + 8):nth-child(-n + 13) {
+  background: #f7f1ea;
+}
+
+.sheet-gutter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Marks a cost that rolls up into the client line above it, so the grouping
+   the mark-up column depends on is visible rather than inferred. */
+.sheet-gutter-rolled {
+  color: var(--accent);
+}
+
+/* The gutter doubles as a button on any row with both sides filled in, to
+   link the client and expense quantities together. */
+button.sheet-gutter {
+  width: 100%;
+  border: none;
+  padding: 0;
+  font: inherit;
+}
+
+.sheet-gutter-linkable {
+  cursor: pointer;
+}
+
+.sheet-gutter-linkable:hover {
+  color: var(--accent);
+}
+
+.sheet-gutter-linked {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.sheet-row-group,
+.sheet-row-head {
+  position: sticky;
+  background: var(--surface);
+}
+
+.sheet-row-group {
+  top: 0;
+  z-index: 3;
+}
+
+.sheet-row-head {
+  top: 1.6rem;
+  z-index: 3;
+}
+
+.sheet-group {
+  grid-column: span 6;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  height: 1.6rem;
+}
+
+.sheet-group-client {
+  background: #dce7ef;
+}
+
+.sheet-group-supplier {
+  background: #efe2d3;
+}
+
+.sheet-row-head > * {
+  display: flex;
+  align-items: flex-end;
+  padding: 0.3rem 0.35rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  line-height: 1.15;
+  min-height: 2.6rem;
+}
+
+.sheet-row-head > .num {
+  justify-content: flex-end;
+}
+
+.sheet-total,
+.sheet-markup-static {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0.35rem;
+  height: 1.85rem;
+  color: var(--text-muted);
+}
+
+.sheet-supplier-desc {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sheet-desc-cell {
+  position: relative;
+  height: 100%;
+}
+
+.sheet-supplier-desc .sheet-desc-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The typeahead's own list — anchored to the description cell, not the row,
+   so it overlays whatever is beneath it instead of pushing rows apart. No
+   transition: this sheet doesn't animate. */
+.sheet-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  min-width: 100%;
+  max-width: 22rem;
+  max-height: 12rem;
+  margin: 0;
+  padding: 0.2rem 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 4px 10px rgb(0 0 0 / 0.12);
+}
+
+.sheet-suggestions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  overflow: hidden;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.sheet-suggestion-active,
+.sheet-suggestions li:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.sheet-suggestion-qty {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-suggestion-active .sheet-suggestion-qty,
+.sheet-suggestions li:hover .sheet-suggestion-qty {
+  color: inherit;
+}
+
+/* Copies a supplier item across to the client side — the spreadsheet does
+   this with `=J11`, and it matches how the job is actually costed: type the
+   supplier items first, then price them. */
+.sheet-copy-across {
+  position: absolute;
+  right: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+}
+
+.sheet-copy-across:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Wraps the client description the same way .sheet-supplier-desc already
+   wraps the supplier one, so both can carry a drag handle. */
+.sheet-desc-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.sheet-desc-wrap .sheet-desc-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet-drag-handle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.9rem;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  cursor: grab;
+  user-select: none;
+}
+
+.sheet-drag-handle:hover {
+  color: var(--accent);
+}
+
+.sheet-drag-handle:active {
+  cursor: grabbing;
+}
+
+.sheet-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.sheet-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.sheet-remove:hover {
+  color: var(--danger);
+}
+
+.sheet-photo-toggle {
+  position: relative;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.5;
+}
+
+.sheet-photo-toggle:hover,
+.sheet-photo-toggle-active {
+  opacity: 1;
+}
+
+.sheet-photo-count {
+  position: absolute;
+  top: -0.5rem;
+  right: -0.6rem;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 0.55rem;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+}
+
+/* The expanded photo strip beneath a row — full width, no grid columns of
+   its own, just thumbnails and an add control. */
+.sheet-row-photos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-photo-thumb {
+  position: relative;
+  display: block;
+  width: 2.8rem;
+  height: 2.8rem;
+}
+
+.sheet-photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+.sheet-photo-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.sheet-photo-thumb button {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.4rem;
+  width: 1rem;
+  height: 1rem;
+  line-height: 1;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sheet-photo-thumb button:hover {
+  color: var(--danger);
+}
+
+.sheet-photo-upload {
+  font-size: 0.72rem;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.sheet-photo-error {
+  font-size: 0.7rem;
+  color: var(--danger);
+}
+
+/* The two lines the spreadsheet types by hand into the supplier list. Here
+   they are worked out, so they read as given rather than editable. */
+.sheet-row-auto {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.sheet-row-auto > * {
+  display: flex;
+  align-items: center;
+  padding: 0 0.35rem;
+  height: 1.85rem;
+  background: #f3ece3;
+}
+
+.sheet-row-auto .sheet-gutter {
+  background: var(--bg);
+}
+
+.sheet-auto-spacer {
+  grid-column: span 6;
+  background: var(--bg) !important;
+}
+
+/* Lines the derived amount up under CE TOTAL, where a typed cost would sit. */
+.sheet-auto-gap {
+  grid-column: span 3;
+}
+
+.sheet-auto-note {
+  grid-column: span 2;
+  font-size: 0.7rem;
+}
+
+.sheet-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 2px solid var(--border);
+}
+
+.sheet-footer-block {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.sheet-footer-client {
+  background: #eef3f7;
+}
+
+.sheet-footer-supplier {
+  background: #f7f1ea;
+  border-left: 1px solid var(--border);
+}
+
+.sheet-footer-block > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.12rem 0;
+}
+
+.sheet-footer-block dt {
+  color: var(--text-muted);
+}
+
+.sheet-footer-block dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-footer-strong dt,
+.sheet-footer-strong dd {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.job-sheet-breakdown {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.6rem 0.75rem;
+}
+
+.job-sheet-breakdown summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.job-sheet-breakdown .financial-grid {
+  margin-top: 0.75rem;
 }
 
 .financial-summary-columns {
@@ -457,6 +885,12 @@ body {
 .banner-warning {
   background: var(--warning-bg);
   color: var(--warning);
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 
 .btn-primary,
@@ -792,13 +1226,13 @@ body {
     padding-bottom: 0.5rem;
   }
 
-  .paired-row {
+  .sheet-footer {
     grid-template-columns: 1fr;
-    padding-bottom: 0.75rem;
   }
 
-  .paired-row-head {
-    display: none;
+  .sheet-footer-supplier {
+    border-left: none;
+    border-top: 1px solid var(--border);
   }
 
   .financial-summary-columns {
@@ -818,29 +1252,174 @@ body {
   }
 }
 
-/* Spot-bid check: works backwards from the price a mine named, rather than
-   forwards from costs like the rest of the form. Visually separated for that
-   reason -- it's a what-if, not part of the sheet being saved. */
-.spot-bid {
-  margin: 1.25rem 0;
-  padding: 1rem;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
+/* ---------------------------------------------------------------------------
+   The internal job sheet, printed.
+
+   The working document staff pass around — both column blocks, supplier
+   names, the fee lines and the profit. Distinct from the client-facing
+   Quote/Invoice (.nsa-doc-*), which shows client lines only and never shows
+   what anything cost.
+   --------------------------------------------------------------------------- */
+.jobsheet-print {
+  max-width: 1120px;
+  font-size: 0.72rem;
 }
 
-.spot-bid h3 {
+.jobsheet-print-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.jobsheet-print-head h1 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.3rem;
+  letter-spacing: 0.06em;
 }
 
-.spot-bid-fields {
+.jobsheet-print-company {
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.jobsheet-print-meta {
+  margin: 0;
+  min-width: 20rem;
+}
+
+.jobsheet-print-meta > div {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.1rem 0;
+}
+
+.jobsheet-print-meta dt {
+  color: var(--text-muted);
+  min-width: 10rem;
+}
+
+.jobsheet-print-meta dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.jobsheet-print-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.jobsheet-print-table th,
+.jobsheet-print-table td {
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.35rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.jobsheet-print-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.jobsheet-print-table thead th {
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.jobsheet-print-groups th {
+  text-align: center;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.jobsheet-print-groups th:nth-child(2) {
+  background: #eef3f7;
+}
+
+.jobsheet-print-groups th:nth-child(3) {
+  background: #f7f1ea;
+}
+
+.jobsheet-print-gutter {
+  color: var(--text-muted);
+  text-align: right;
+  width: 2rem;
+}
+
+.jobsheet-print-auto {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.jobsheet-print-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.jobsheet-print-photos img {
+  width: 10mm;
+  height: 10mm;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+.jobsheet-print-totals {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
-  gap: 0.75rem;
-  margin: 0.75rem 0;
-  max-width: 32rem;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 0.75rem;
 }
 
-.spot-bid-result .financial-grid {
-  margin-bottom: 0.5rem;
+.jobsheet-print-totals dl {
+  margin: 0;
+}
+
+.jobsheet-print-totals > dl:first-child {
+  background: #eef3f7;
+}
+
+.jobsheet-print-totals > dl:last-child {
+  background: #f7f1ea;
+}
+
+.jobsheet-print-totals dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.jobsheet-print-totals dt {
+  color: var(--text-muted);
+}
+
+.jobsheet-print-totals dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.jobsheet-print-totals .strong dt,
+.jobsheet-print-totals .strong dd {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.jobsheet-print-footnote {
+  margin-top: 1rem;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+@media print {
+  /* The internal sheet is landscape; the client documents stay portrait. */
+  .jobsheet-print {
+    max-width: none;
+  }
 }

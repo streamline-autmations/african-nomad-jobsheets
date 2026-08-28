@@ -9,3 +9,4 @@ supabase/.temp/
 .vercel
 
 .vercel
+.claude/settings.local.json
