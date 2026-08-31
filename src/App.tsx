@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { JobSheetForm } from "./components/JobSheetForm";
 import { ApprovalView } from "./components/ApprovalView";
-import { JobSheetHistory } from "./components/JobSheetHistory";
 import { NsaQuoteForm } from "./components/NsaQuoteForm";
 import { NsaQuoteList } from "./components/NsaQuoteList";
 import { supabaseConfigured } from "./lib/supabase";
 
-type Tab = "new" | "approvals" | "history" | "nsa-new" | "nsa-quotes";
+type Tab = "new" | "approvals" | "nsa-new" | "nsa-quotes";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("new");
@@ -37,14 +36,7 @@ export default function App() {
             className={tab === "approvals" ? "active" : ""}
             onClick={() => setTab("approvals")}
           >
-            Approvals
-          </button>
-          <button
-            type="button"
-            className={tab === "history" ? "active" : ""}
-            onClick={() => setTab("history")}
-          >
-            History
+            Approved Job Sheets
           </button>
           <button
             type="button"
@@ -87,7 +79,6 @@ export default function App() {
             }}
           />
         )}
-        {tab === "history" && <JobSheetHistory />}
         {tab === "nsa-new" && (
           <NsaQuoteForm
             onSaved={() => {

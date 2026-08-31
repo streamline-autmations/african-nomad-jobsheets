@@ -983,6 +983,46 @@ button.sheet-gutter {
   border-color: var(--accent);
 }
 
+.company-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.company-tabs button {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.company-tabs button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+.job-sheet-search {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: var(--surface);
+  margin-bottom: 0.75rem;
+  box-sizing: border-box;
+}
+
+.job-sheet-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(138, 90, 43, 0.14);
+}
+
 .sync-history-list {
   list-style: none;
   padding: 0;

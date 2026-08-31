@@ -25,6 +25,8 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
+  const [companyTab, setCompanyTab] = useState<string>("all");
+  const [search, setSearch] = useState("");
 
   // NSA quote hand-off state.
   const [quoteFormOpen, setQuoteFormOpen] = useState(false);
@@ -176,10 +178,51 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   if (loadError) return <div className="banner banner-error">{loadError}</div>;
   if (drafts.length === 0) return <p>No drafts waiting for approval.</p>;
 
+  const byCompany =
+    companyTab === "all" ? drafts : drafts.filter((d) => d.companyId === companyTab);
+  const searchTerm = search.trim().toLowerCase();
+  const visibleDrafts = searchTerm
+    ? byCompany.filter(
+        (d) =>
+          d.customerNameRaw.toLowerCase().includes(searchTerm) ||
+          d.jobDescription.toLowerCase().includes(searchTerm),
+      )
+    : byCompany;
+
   return (
     <div className="approval-view">
       <div className="approval-list">
-        {drafts.map((sheet) => (
+        <div className="company-tabs">
+          <button
+            type="button"
+            className={companyTab === "all" ? "active" : ""}
+            onClick={() => setCompanyTab("all")}
+          >
+            All companies
+          </button>
+          {companies.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={companyTab === c.id ? "active" : ""}
+              onClick={() => setCompanyTab(c.id)}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+
+        <input
+          type="search"
+          className="job-sheet-search"
+          placeholder="Search by customer or job description…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+
+        {visibleDrafts.length === 0 && <p>No job sheets match this filter.</p>}
+
+        {visibleDrafts.map((sheet) => (
           <button
             key={sheet.id}
             type="button"
