@@ -135,6 +135,59 @@ async function findOrCreateServiceItem(conn: QboConnection, itemName: string): P
   return created.Item.Id as string;
 }
 
+export interface QboCustomerRecord {
+  id: string;
+  displayName: string;
+  parentId: string | null;
+  isSubCustomer: boolean;
+  billAddress: string;
+  shipAddress: string;
+}
+
+function formatQboAddress(addr: any): string {
+  if (!addr) return "";
+  return [addr.Line1, addr.Line2, addr.City, addr.CountrySubDivisionCode, addr.PostalCode]
+    .filter(Boolean)
+    .join(", ");
+}
+
+/**
+ * Every Customer in the connected QBO company, sub-customers (Jobs) included
+ * — a mine site like "Sibanye Rustenburg Mine Pty Ltd:Saffy Shaft" is a
+ * top-level customer with a sub-customer beneath it. Paginates in batches of
+ * 100 since QBO caps a single query's MAXRESULTS.
+ */
+export async function listCustomers(): Promise<QboCustomerRecord[]> {
+  const conn = await getActiveConnection();
+  const records: QboCustomerRecord[] = [];
+  const pageSize = 100;
+  let startPosition = 1;
+
+  for (;;) {
+    const query =
+      `select Id, DisplayName, ParentRef, Job, BillAddr, ShipAddr from Customer ` +
+      `where Active = true startposition ${startPosition} maxresults ${pageSize}`;
+    const result = await qboFetch(conn, `/query?query=${encodeURIComponent(query)}`);
+    const page = (result.QueryResponse?.Customer ?? []) as any[];
+
+    for (const c of page) {
+      records.push({
+        id: c.Id as string,
+        displayName: c.DisplayName as string,
+        parentId: c.ParentRef?.value ?? null,
+        isSubCustomer: Boolean(c.Job),
+        billAddress: formatQboAddress(c.BillAddr),
+        shipAddress: formatQboAddress(c.ShipAddr),
+      });
+    }
+
+    if (page.length < pageSize) break;
+    startPosition += pageSize;
+  }
+
+  return records;
+}
+
 export interface QboLine {
   description: string;
   qty: number;

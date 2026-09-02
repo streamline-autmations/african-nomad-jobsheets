@@ -8,6 +8,14 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["apple-touch-icon.png"],
+      workbox: {
+        // Without this, the service worker's NavigationRoute intercepts
+        // every browser navigation — including /api/qbo/connect and
+        // /api/qbo/callback — and serves the cached SPA shell instead of
+        // ever hitting the network, so the QBO OAuth redirect silently
+        // never happens. Mirrors vercel.json's own rewrite exclusion.
+        navigateFallbackDenylist: [/^\/api\//, /^\/legal\//],
+      },
       manifest: {
         name: "African Nomad — Job Sheets",
         short_name: "AN Job Sheets",

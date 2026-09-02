@@ -57,6 +57,7 @@ type NsaQuoteRow = {
   po_number: string;
   client_name: string;
   client_address: string;
+  qbo_customer_id: string | null;
   job_description: string;
   event_date: string | null;
   status: NsaQuoteStatus;
@@ -81,6 +82,7 @@ function toNsaQuote(row: NsaQuoteRow): NsaQuote {
     poNumber: row.po_number,
     clientName: row.client_name,
     clientAddress: row.client_address,
+    qboCustomerId: row.qbo_customer_id,
     jobDescription: row.job_description,
     eventDate: row.event_date,
     status: row.status,
@@ -154,6 +156,7 @@ export interface SaveNsaQuoteDraftInput {
   poNumber: string;
   clientName: string;
   clientAddress: string;
+  qboCustomerId?: string | null;
   jobDescription: string;
   eventDate: string | null;
   lines: LineItem[];
@@ -169,6 +172,7 @@ export async function saveNsaQuoteDraft(input: SaveNsaQuoteDraftInput): Promise<
     po_number: input.poNumber,
     client_name: input.clientName,
     client_address: input.clientAddress,
+    qbo_customer_id: input.qboCustomerId ?? null,
     job_description: input.jobDescription,
     event_date: input.eventDate,
     lines: input.lines,
@@ -196,6 +200,7 @@ export interface CreateNsaInvoiceDirectInput {
   poNumber: string;
   clientName: string;
   clientAddress: string;
+  qboCustomerId?: string | null;
   jobDescription: string;
   eventDate: string | null;
   lines: LineItem[];
@@ -215,6 +220,7 @@ export async function createNsaInvoiceDirect(
     po_number: input.poNumber,
     client_name: input.clientName,
     client_address: input.clientAddress,
+    qbo_customer_id: input.qboCustomerId ?? null,
     job_description: input.jobDescription,
     event_date: input.eventDate,
     lines: input.lines,

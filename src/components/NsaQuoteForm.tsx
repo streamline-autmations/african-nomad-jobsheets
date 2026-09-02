@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { LineItemsTable } from "./LineItemsTable";
 import { withLineTotal } from "../lib/feeCalculations";
 import {
@@ -6,6 +6,12 @@ import {
   createNsaInvoiceDirect,
   saveNsaQuoteDraft,
 } from "../lib/nsaQuotes";
+import {
+  fetchNsaQboCustomers,
+  nsaQboCustomerLabel,
+  syncNsaQboCustomers,
+  type NsaQboCustomer,
+} from "../lib/nsaQboCustomers";
 import type { LineItemInput } from "../types";
 import { errorMessage } from "../lib/errors";
 
@@ -35,9 +41,52 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
   const [eventDate, setEventDate] = useState("");
   const [lines, setLines] = useState<LineItemInput[]>([emptyLine()]);
 
+  // Real customers mirrored from NSA's QuickBooks Online company (see
+  // api/qbo/sync-nsa-customers.ts). Manual entry stays the default since this
+  // list is empty until a real QBO connection exists and has been synced at
+  // least once.
+  const [qboCustomers, setQboCustomers] = useState<NsaQboCustomer[]>([]);
+  const [qboCustomersError, setQboCustomersError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [isManualClient, setIsManualClient] = useState(true);
+  const [selectedQboCustomerId, setSelectedQboCustomerId] = useState<string | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  function loadQboCustomers() {
+    fetchNsaQboCustomers()
+      .then((data) => {
+        setQboCustomers(data);
+        setQboCustomersError(null);
+      })
+      .catch((err: unknown) => setQboCustomersError(errorMessage(err)));
+  }
+
+  useEffect(loadQboCustomers, []);
+
+  async function handleSync() {
+    setQboCustomersError(null);
+    setSyncing(true);
+    try {
+      await syncNsaQboCustomers();
+      loadQboCustomers();
+    } catch (err) {
+      setQboCustomersError(errorMessage(err));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  function handleSelectQboCustomer(qboCustomerId: string) {
+    const customer = qboCustomers.find((c) => c.qboCustomerId === qboCustomerId);
+    if (!customer) return;
+    setSelectedQboCustomerId(customer.qboCustomerId);
+    setClientName(nsaQboCustomerLabel(customer, qboCustomers));
+    setClientAddress(customer.billAddress);
+    if (customer.vendorNumber) setVendorNumber(customer.vendorNumber);
+  }
 
   const totals = useMemo(
     () => calculateNsaQuoteTotals(lines.map(withLineTotal)),
@@ -54,6 +103,7 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
     setJobDescription("");
     setEventDate("");
     setLines([emptyLine()]);
+    setSelectedQboCustomerId(null);
   }
 
   async function handleSave() {
@@ -82,6 +132,7 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
           poNumber: poNumber.trim(),
           clientName: clientName.trim(),
           clientAddress: clientAddress.trim(),
+          qboCustomerId: selectedQboCustomerId,
           jobDescription,
           eventDate: eventDate || null,
           lines: lines.map(withLineTotal),
@@ -94,6 +145,7 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
           poNumber: poNumber.trim(),
           clientName: clientName.trim(),
           clientAddress: clientAddress.trim(),
+          qboCustomerId: selectedQboCustomerId,
           jobDescription,
           eventDate: eventDate || null,
           lines: lines.map(withLineTotal),
@@ -173,25 +225,68 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
           />
         </label>
 
-        <label className="field">
-          <span>Client name</span>
-          <input
-            type="text"
-            value={clientName}
-            onChange={(e) => setClientName(e.target.value)}
-            placeholder="e.g. Harmony Kalgold"
-          />
-        </label>
+        <div className="field">
+          <span>Bill to / Ship to</span>
 
-        <label className="field">
-          <span>Client address</span>
-          <input
-            type="text"
-            value={clientAddress}
-            onChange={(e) => setClientAddress(e.target.value)}
-            placeholder="e.g. Kalgold - Stores, Mafikeng, NW 1760"
-          />
-        </label>
+          {!isManualClient && (
+            <select
+              value={selectedQboCustomerId ?? ""}
+              onChange={(e) => handleSelectQboCustomer(e.target.value)}
+            >
+              <option value="" disabled>
+                Select a QuickBooks customer…
+              </option>
+              {qboCustomers.map((customer) => (
+                <option key={customer.qboCustomerId} value={customer.qboCustomerId}>
+                  {nsaQboCustomerLabel(customer, qboCustomers)}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {isManualClient && (
+            <>
+              <input
+                type="text"
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                placeholder="e.g. Harmony Kalgold"
+              />
+              <input
+                type="text"
+                value={clientAddress}
+                onChange={(e) => setClientAddress(e.target.value)}
+                placeholder="e.g. Kalgold - Stores, Mafikeng, NW 1760"
+                style={{ marginTop: "0.5rem" }}
+              />
+            </>
+          )}
+
+          <label className="checkbox-inline" style={{ marginTop: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={!isManualClient}
+              onChange={(e) => {
+                setIsManualClient(!e.target.checked);
+                if (!e.target.checked) setSelectedQboCustomerId(null);
+              }}
+            />
+            Pick from QuickBooks customers instead of typing
+          </label>
+
+          {!isManualClient && (
+            <p className="field-hint">
+              {qboCustomers.length === 0
+                ? "No customers synced yet."
+                : `${qboCustomers.length} customer(s) synced${qboCustomers[0]?.lastSyncedAt ? ` — last synced ${new Date(qboCustomers[0].lastSyncedAt!).toLocaleString()}` : ""}.`}{" "}
+              <button type="button" className="btn-secondary" disabled={syncing} onClick={handleSync}>
+                {syncing ? "Syncing…" : "Sync from QuickBooks"}
+              </button>
+            </p>
+          )}
+
+          {qboCustomersError && <div className="banner banner-error">{qboCustomersError}</div>}
+        </div>
 
         <label className="field">
           <span>Job description</span>

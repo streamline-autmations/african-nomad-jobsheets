@@ -13,6 +13,8 @@ export interface NsaQuote {
   poNumber: string;
   clientName: string;
   clientAddress: string;
+  /** Set once this quote/invoice was raised against a real QBO customer picked from the synced list, rather than free-typed. */
+  qboCustomerId: string | null;
   jobDescription: string;
   eventDate: string | null;
   status: NsaQuoteStatus;
