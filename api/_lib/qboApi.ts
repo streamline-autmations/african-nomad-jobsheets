@@ -16,8 +16,32 @@ interface QboConnection {
   expires_at: string;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * One retry, and only for failures worth retrying: a network-level throw, or
+ * a 5xx from Intuit's side. A 4xx (bad request, expired/invalid token,
+ * invalid_grant, etc.) means retrying the exact same request will fail the
+ * exact same way, so those are returned immediately for the caller to handle.
+ */
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  try {
+    const res = await fetch(url, init);
+    if (res.status >= 500) {
+      await sleep(400);
+      return fetch(url, init);
+    }
+    return res;
+  } catch (err) {
+    await sleep(400);
+    return fetch(url, init);
+  }
+}
+
 async function refreshAccessToken(conn: QboConnection): Promise<QboConnection> {
-  const res = await fetch(INTUIT_TOKEN_URL, {
+  const res = await fetchWithRetry(INTUIT_TOKEN_URL, {
     method: "POST",
     headers: {
       Authorization: intuitBasicAuthHeader(),
@@ -30,7 +54,10 @@ async function refreshAccessToken(conn: QboConnection): Promise<QboConnection> {
     }),
   });
   if (!res.ok) {
-    throw new Error(`QBO token refresh failed: ${await res.text()}`);
+    const tid = res.headers.get("intuit_tid");
+    const text = await res.text();
+    console.error("QBO token refresh failed", { intuit_tid: tid, body: text });
+    throw new Error(`QBO token refresh failed${tid ? ` [intuit_tid: ${tid}]` : ""}: ${text}`);
   }
   const tokens = (await res.json()) as {
     access_token: string;
@@ -77,7 +104,7 @@ async function getActiveConnection(): Promise<QboConnection> {
 // the shape they asked for, so this deliberately returns `any` rather than
 // threading a generic through every query/create call site.
 async function qboFetch(conn: QboConnection, path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(`${QBO_API_BASE}/v3/company/${conn.realm_id}${path}`, {
+  const res = await fetchWithRetry(`${QBO_API_BASE}/v3/company/${conn.realm_id}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${conn.access_token}`,
@@ -87,7 +114,13 @@ async function qboFetch(conn: QboConnection, path: string, init?: RequestInit): 
     },
   });
   if (!res.ok) {
-    throw new Error(`QBO API error (${path}): ${await res.text()}`);
+    // intuit_tid identifies this exact request to Intuit's own support team —
+    // capturing it is the single most useful thing for them to troubleshoot
+    // an error with, so it goes in both the log and the thrown message.
+    const tid = res.headers.get("intuit_tid");
+    const text = await res.text();
+    console.error("QBO API error", { path, intuit_tid: tid, body: text });
+    throw new Error(`QBO API error (${path})${tid ? ` [intuit_tid: ${tid}]` : ""}: ${text}`);
   }
   return res.json();
 }

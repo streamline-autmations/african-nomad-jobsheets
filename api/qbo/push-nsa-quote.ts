@@ -52,6 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     res.status(200).json({ success: true, qboId: result.id, qboDocNumber: result.docNumber });
   } catch (err) {
+    console.error("push-nsa-quote failed", { quoteId, err });
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 }

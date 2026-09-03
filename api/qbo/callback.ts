@@ -12,15 +12,43 @@ import {
  * Compliance tab). Intuit redirects here with ?code&realmId after the user
  * approves the connection. Exchanges the code for tokens and stores them.
  */
+// Clears the one-time state cookie regardless of outcome — a stale value
+// left behind after a failed or abandoned attempt should never be checked
+// against a later, unrelated connect attempt.
+function clearStateCookie(res: VercelResponse) {
+  res.setHeader("Set-Cookie", "qbo_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/api/qbo; Max-Age=0");
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const { code, realmId, error } = req.query;
+  const { code, realmId, error, state } = req.query;
 
   if (error) {
+    clearStateCookie(res);
     res.status(400).send(htmlPage("Connection failed", `<h1>Connection failed</h1><p>${String(error)}</p>`));
     return;
   }
   if (!code || !realmId) {
+    clearStateCookie(res);
     res.status(400).send(htmlPage("Missing parameters", "<h1>Missing code or realmId from QuickBooks.</h1>"));
+    return;
+  }
+
+  // CSRF check: the state Intuit hands back must match the one connect.ts
+  // put in an HttpOnly cookie right before redirecting there. A mismatch (or
+  // a missing cookie, e.g. this callback URL was opened directly) means this
+  // request didn't originate from a connect flow we started ourselves.
+  const expectedState = req.cookies?.qbo_oauth_state;
+  clearStateCookie(res);
+  if (!expectedState || expectedState !== state) {
+    console.error("QBO callback state mismatch", { expectedState, receivedState: state });
+    res
+      .status(400)
+      .send(
+        htmlPage(
+          "Connection failed",
+          "<h1>Connection failed</h1><p>Could not verify this request came from a connection you started. Please try connecting again.</p>",
+        ),
+      );
     return;
   }
 
@@ -40,7 +68,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (!tokenRes.ok) {
     const text = await tokenRes.text();
-    res.status(502).send(htmlPage("Token exchange failed", `<h1>Token exchange failed</h1><pre>${text}</pre>`));
+    const tid = tokenRes.headers.get("intuit_tid");
+    console.error("QBO token exchange failed", { intuit_tid: tid, body: text });
+    res
+      .status(502)
+      .send(
+        htmlPage(
+          "Token exchange failed",
+          `<h1>Token exchange failed</h1>${tid ? `<p>Reference: ${tid}</p>` : ""}<pre>${text}</pre>`,
+        ),
+      );
     return;
   }
 
@@ -64,6 +101,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   );
 
   if (dbError) {
+    console.error("QBO connection storage failed", dbError);
     res.status(500).send(htmlPage("Storage failed", `<h1>Could not store connection</h1><pre>${dbError.message}</pre>`));
     return;
   }

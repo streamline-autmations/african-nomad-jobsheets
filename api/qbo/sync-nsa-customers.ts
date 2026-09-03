@@ -21,6 +21,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     customers = await listCustomers();
   } catch (err) {
+    console.error("sync-nsa-customers: listCustomers failed", err);
     res.status(502).json({
       error: err instanceof Error ? err.message : String(err),
     });
@@ -47,6 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .upsert(rows, { onConflict: "qbo_customer_id" });
 
   if (error) {
+    console.error("sync-nsa-customers: upsert failed", error);
     res.status(500).json({ error: error.message });
     return;
   }
