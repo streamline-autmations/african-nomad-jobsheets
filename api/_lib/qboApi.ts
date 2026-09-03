@@ -164,8 +164,12 @@ export async function listCustomers(): Promise<QboCustomerRecord[]> {
   let startPosition = 1;
 
   for (;;) {
+    // QBO's query language only allows simple/queryable fields to be named
+    // in SELECT — compound properties like BillAddr/ShipAddr/ParentRef
+    // ("Property BillAddr not found for Entity Customer") are only returned
+    // via `select *`, which fetches the full object.
     const query =
-      `select Id, DisplayName, ParentRef, Job, BillAddr, ShipAddr from Customer ` +
+      `select * from Customer ` +
       `where Active = true startposition ${startPosition} maxresults ${pageSize}`;
     const result = await qboFetch(conn, `/query?query=${encodeURIComponent(query)}`);
     const page = (result.QueryResponse?.Customer ?? []) as any[];
