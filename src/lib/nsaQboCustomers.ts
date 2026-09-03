@@ -97,3 +97,44 @@ export async function syncNsaQboCustomers(): Promise<number> {
   if (!res.ok) throw new Error(body.error ?? "Sync with QuickBooks failed.");
   return body.synced as number;
 }
+
+export async function fetchNsaQboCustomerByQboId(
+  qboCustomerId: string,
+): Promise<NsaQboCustomer | null> {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("nsa_qbo_customers")
+    .select("*")
+    .eq("qbo_customer_id", qboCustomerId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toNsaQboCustomer(data) : null;
+}
+
+const STALE_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * Fetches the synced customer list, silently kicking off a real sync first
+ * if it's never been synced or the newest row is over an hour old — so
+ * opening the Job Sheet / NSA Quote form keeps this fresh on its own instead
+ * of depending on someone remembering to click "Sync from QuickBooks".
+ * Falls back to whatever's cached if the background sync fails; that button
+ * still exists for a manual retry when something's actually broken.
+ */
+export async function fetchNsaQboCustomersFresh(): Promise<NsaQboCustomer[]> {
+  const customers = await fetchNsaQboCustomers();
+  const newestSync = customers.reduce<number>((latest, c) => {
+    if (!c.lastSyncedAt) return latest;
+    const t = new Date(c.lastSyncedAt).getTime();
+    return t > latest ? t : latest;
+  }, 0);
+  const isStale = customers.length === 0 || Date.now() - newestSync > STALE_AFTER_MS;
+  if (!isStale) return customers;
+
+  try {
+    await syncNsaQboCustomers();
+    return await fetchNsaQboCustomers();
+  } catch {
+    return customers;
+  }
+}

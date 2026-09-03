@@ -8,6 +8,7 @@ import {
 } from "../lib/nsaQuotes";
 import {
   fetchNsaQboCustomers,
+  fetchNsaQboCustomersFresh,
   nsaQboCustomerLabel,
   syncNsaQboCustomers,
   type NsaQboCustomer,
@@ -64,7 +65,18 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
       .catch((err: unknown) => setQboCustomersError(errorMessage(err)));
   }
 
-  useEffect(loadQboCustomers, []);
+  // First load auto-syncs if the mirror is stale/empty (see
+  // fetchNsaQboCustomersFresh) so this list stays current without anyone
+  // having to remember to click "Sync from QuickBooks" — that button still
+  // exists below for an on-demand refresh.
+  useEffect(() => {
+    fetchNsaQboCustomersFresh()
+      .then((data) => {
+        setQboCustomers(data);
+        setQboCustomersError(null);
+      })
+      .catch((err: unknown) => setQboCustomersError(errorMessage(err)));
+  }, []);
 
   async function handleSync() {
     setQboCustomersError(null);

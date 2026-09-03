@@ -27,6 +27,7 @@ type JobSheetRow = {
   company_id: string;
   customer_id: string | null;
   customer_name_raw: string;
+  qbo_customer_id: string | null;
   job_description: string;
   event_date: string | null;
   status: JobSheet["status"];
@@ -58,6 +59,7 @@ function toJobSheet(row: JobSheetRow): JobSheet {
     companyId: row.company_id,
     customerId: row.customer_id,
     customerNameRaw: row.customer_name_raw,
+    qboCustomerId: row.qbo_customer_id,
     jobDescription: row.job_description,
     eventDate: row.event_date,
     status: row.status,
@@ -167,6 +169,7 @@ export interface SaveJobSheetDraftInput {
   companyName: string;
   customerId: string | null;
   customerNameRaw: string;
+  qboCustomerId?: string | null;
   jobDescription: string;
   eventDate: string | null;
   clientLines: LineItem[];
@@ -212,6 +215,7 @@ export async function saveJobSheetDraft(
     company_id: input.companyId,
     customer_id: input.customerId,
     customer_name_raw: input.customerNameRaw,
+    qbo_customer_id: input.qboCustomerId ?? null,
     job_description: input.jobDescription,
     event_date: input.eventDate,
     client_lines: input.clientLines,

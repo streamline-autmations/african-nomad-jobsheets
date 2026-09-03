@@ -99,6 +99,8 @@ export interface JobSheet extends JobSheetFinancials {
   companyId: string;
   customerId: string | null;
   customerNameRaw: string;
+  /** Set once this job sheet's customer was picked from the real QBO customer mirror, so a later quote/invoice hand-off can carry vendor number and address forward without retyping. */
+  qboCustomerId: string | null;
   jobDescription: string;
   eventDate: string | null;
   status: JobSheetStatus;

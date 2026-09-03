@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { approveJobSheet, fetchCompanies, fetchDraftJobSheets } from "../lib/jobSheets";
 import { fetchLatestNsaQuoteForClient, fetchNsaQuoteById } from "../lib/nsaQuotes";
+import { fetchNsaQboCustomerByQboId } from "../lib/nsaQboCustomers";
 import { convertJobSheetToNsaQuote } from "../lib/jobSheetToNsaQuote";
 import type { Company, JobSheet } from "../types";
 import type { NsaQuote } from "../nsaTypes";
@@ -105,14 +106,32 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   }, [selected?.nsaQuoteId]);
 
   // Vendor number and address belong to the NSA-to-mine relationship, not to
-  // the job, so they're the same on every quote to that mine. Pull them from
-  // the last one rather than making him retype them.
+  // the job, so they're the same on every quote to that mine. Prefer the real
+  // QBO customer link (set when the job sheet was created — see
+  // JobSheetForm's "Link to a real QuickBooks customer" field): it's a direct
+  // id match, so it works even for a client that's never been quoted before.
+  // Falls back to the old "last quote with a matching client_name" guess only
+  // when there's no link, e.g. a job sheet created before this existed.
   async function openQuoteForm(jobSheet: JobSheet) {
     setQuoteFormOpen(true);
     setQuoteError(null);
     setQuoteMessage(null);
     const requestId = ++prefillRequestId.current;
     try {
+      if (jobSheet.qboCustomerId) {
+        const customer = await fetchNsaQboCustomerByQboId(jobSheet.qboCustomerId);
+        if (prefillRequestId.current !== requestId) return;
+        if (customer) {
+          setQuoteFields({
+            ...EMPTY_QUOTE_FIELDS,
+            vendorNumber: customer.vendorNumber,
+            clientAddress: customer.billAddress,
+          });
+          setPrefillNote("Vendor number and address filled in from the linked QuickBooks customer.");
+          return;
+        }
+      }
+
       const previous = await fetchLatestNsaQuoteForClient(jobSheet.customerNameRaw);
       if (prefillRequestId.current !== requestId) return; // stale — a newer lookup superseded this one
       if (previous) {
