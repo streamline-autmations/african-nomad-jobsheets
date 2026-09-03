@@ -57,7 +57,13 @@ async function refreshAccessToken(conn: QboConnection): Promise<QboConnection> {
     const tid = res.headers.get("intuit_tid");
     const text = await res.text();
     console.error("QBO token refresh failed", { intuit_tid: tid, body: text });
-    throw new Error(`QBO token refresh failed${tid ? ` [intuit_tid: ${tid}]` : ""}: ${text}`);
+    // A refresh call fails when the refresh token itself is dead — expired
+    // (they last ~100 days) or revoked (disconnected from within QuickBooks).
+    // Retrying won't fix that; the only way forward is reconnecting, so the
+    // message says so explicitly rather than surfacing Intuit's raw error.
+    throw new Error(
+      `Your QuickBooks connection has expired or was disconnected — reconnect at /api/qbo/connect.${tid ? ` [intuit_tid: ${tid}]` : ""}`,
+    );
   }
   const tokens = (await res.json()) as {
     access_token: string;
