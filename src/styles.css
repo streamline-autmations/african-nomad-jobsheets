@@ -72,6 +72,23 @@ body {
   border-color: var(--accent);
 }
 
+.app-footer {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-muted, #777);
+  text-align: center;
+}
+
+.app-footer a {
+  color: inherit;
+}
+
+.app-footer a:hover {
+  color: var(--accent);
+}
+
 .job-sheet-form,
 .approval-view {
   display: flex;

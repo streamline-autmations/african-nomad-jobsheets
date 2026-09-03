@@ -89,6 +89,18 @@ export default function App() {
         )}
         {tab === "nsa-quotes" && <NsaQuoteList key={nsaQuoteListKey} />}
       </main>
+
+      <footer className="app-footer">
+        <a href="mailto:admin@africannomad.co.za">Support: admin@africannomad.co.za</a>
+        <span aria-hidden="true"> · </span>
+        <a href="/legal/privacy.html" target="_blank" rel="noreferrer">
+          Privacy Policy
+        </a>
+        <span aria-hidden="true"> · </span>
+        <a href="/legal/eula.html" target="_blank" rel="noreferrer">
+          Terms
+        </a>
+      </footer>
     </div>
   );
 }
