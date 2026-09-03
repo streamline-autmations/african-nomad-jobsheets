@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { approveJobSheet, fetchCompanies, fetchDraftJobSheets } from "../lib/jobSheets";
+import {
+  approveJobSheet,
+  deleteJobSheetDraft,
+  fetchCompanies,
+  fetchDraftJobSheets,
+} from "../lib/jobSheets";
 import { fetchLatestNsaQuoteForClient, fetchNsaQuoteById } from "../lib/nsaQuotes";
 import { fetchNsaQboCustomerByQboId } from "../lib/nsaQboCustomers";
 import { convertJobSheetToNsaQuote } from "../lib/jobSheetToNsaQuote";
@@ -26,6 +31,8 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [companyTab, setCompanyTab] = useState<string>("all");
   const [search, setSearch] = useState("");
 
@@ -193,6 +200,26 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
     }
   }
 
+  async function handleDelete(jobSheet: JobSheet) {
+    setDeleteError(null);
+    const confirmed = window.confirm(
+      `Permanently delete this draft job sheet for ${jobSheet.customerNameRaw || "this customer"}? ` +
+        "This cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    try {
+      await deleteJobSheetDraft(jobSheet.id);
+      setSelectedId(null);
+      load();
+    } catch (err) {
+      setDeleteError(errorMessage(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   if (loading) return <p>Loading drafts…</p>;
   if (loadError) return <div className="banner banner-error">{loadError}</div>;
   if (drafts.length === 0) return <p>No drafts waiting for approval.</p>;
@@ -290,6 +317,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
           )}
 
           {approveError && <div className="banner banner-error">{approveError}</div>}
+          {deleteError && <div className="banner banner-error">{deleteError}</div>}
           {quoteError && <div className="banner banner-error">{quoteError}</div>}
           {quoteMessage && <div className="banner banner-success">{quoteMessage}</div>}
 
@@ -416,6 +444,14 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
               onClick={() => onEditJobSheet(selected.id)}
             >
               Edit (add expenses, change lines…)
+            </button>
+            <button
+              type="button"
+              className="btn-danger"
+              disabled={approving || deleting}
+              onClick={() => handleDelete(selected)}
+            >
+              {deleting ? "Deleting…" : "Delete draft"}
             </button>
             <button
               type="button"

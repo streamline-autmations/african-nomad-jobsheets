@@ -232,6 +232,34 @@ export async function saveJobSheetDraft(
   return toJobSheet(data);
 }
 
+// Restricted to drafts by RLS (see 202609030002_allow_deleting_drafts.sql) —
+// anything approved/queued/synced/failed represents a real document and
+// can't be deleted, only a draft can. Cleans up both possible foreign-key
+// blockers first: attached files (which the job_sheets row itself doesn't
+// cascade-delete) and, in case this sheet was created FROM an accepted NSA
+// quote (the reverse hand-off), that quote's back-reference to it.
+export async function deleteJobSheetDraft(id: string): Promise<void> {
+  const client = requireSupabase();
+
+  await client.from("nsa_quotes").update({ an_job_sheet_id: null }).eq("an_job_sheet_id", id);
+
+  const files = await fetchJobSheetFiles(id);
+  for (const file of files) {
+    await deleteJobSheetFile(file.id, file.storagePath);
+  }
+
+  const { data, error } = await client
+    .from("job_sheets")
+    .delete()
+    .eq("id", id)
+    .eq("status", "draft")
+    .select("id");
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("Couldn't delete — it may no longer be a draft.");
+  }
+}
+
 // The only path that ever writes to qbd_sync_queue: calls the
 // approve_job_sheet() Postgres function, which atomically flips the job
 // sheet to 'approved' and queues the create_customer (if needed) and

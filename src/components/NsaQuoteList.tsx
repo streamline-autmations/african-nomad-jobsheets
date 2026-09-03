@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  deleteNsaQuoteDraft,
   fetchNsaQuotes,
   markNsaQuoteAccepted,
   markNsaQuoteInvoiced,
@@ -35,6 +36,27 @@ export function NsaQuoteList() {
   useEffect(load, []);
 
   const selected = quotes.find((q) => q.id === selectedId) ?? null;
+
+  async function handleDelete(quote: NsaQuote) {
+    setActionError(null);
+    const confirmed = window.confirm(
+      `Permanently delete draft quote ${quote.quoteNumber || "(unnumbered)"} for ${
+        quote.clientName || "this client"
+      }? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    try {
+      await deleteNsaQuoteDraft(quote.id);
+      setSelectedId(null);
+      load();
+    } catch (err) {
+      setActionError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleMarkSent(quote: NsaQuote) {
     setActionError(null);
@@ -196,6 +218,17 @@ export function NsaQuoteList() {
                 onClick={() => handleMarkSent(selected)}
               >
                 Mark as Sent
+              </button>
+            )}
+
+            {selected.status === "draft" && (
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={busy}
+                onClick={() => handleDelete(selected)}
+              >
+                Delete draft
               </button>
             )}
 

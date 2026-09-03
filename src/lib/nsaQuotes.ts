@@ -291,6 +291,28 @@ export async function markNsaQuoteInvoiced(
   return toNsaQuote(data);
 }
 
+// Restricted to drafts by RLS (see 202609030002_allow_deleting_drafts.sql) —
+// a sent/accepted/invoiced quote is a real document that may already be in
+// the client's hands and can't be deleted. Clears the reverse link first in
+// case this draft was created FROM a job sheet hand-off, so deleting it
+// doesn't hit job_sheets_nsa_quote_id_fkey.
+export async function deleteNsaQuoteDraft(id: string): Promise<void> {
+  const client = requireSupabase();
+
+  await client.from("job_sheets").update({ nsa_quote_id: null }).eq("nsa_quote_id", id);
+
+  const { data, error } = await client
+    .from("nsa_quotes")
+    .delete()
+    .eq("id", id)
+    .eq("status", "draft")
+    .select("id");
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("Couldn't delete — it may no longer be a draft.");
+  }
+}
+
 // Job Sheet -> NSA Quote hand-off (src/lib/jobSheetToNsaQuote.ts). Inserts
 // the quote and links it back to the job sheet in one atomic Postgres
 // transaction (create_nsa_quote_from_job_sheet, 202608180001) — a row lock

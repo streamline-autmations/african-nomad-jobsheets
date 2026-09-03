@@ -894,7 +894,8 @@ button.sheet-gutter {
 }
 
 .btn-primary,
-.btn-secondary {
+.btn-secondary,
+.btn-danger {
   border: none;
   border-radius: 6px;
   padding: 0.6rem 1.2rem;
@@ -935,6 +936,26 @@ button.sheet-gutter {
 
 .btn-secondary:active:not(:disabled) {
   transform: scale(0.98);
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid #b3392f;
+  color: #b3392f;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #b3392f;
+  color: #fff;
+}
+
+.btn-danger:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .btn-icon {
