@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { DocumentOverlay } from "./DocumentOverlay";
 import { downloadElementAsPdf } from "../lib/pdfDownload";
 import { linesToSheetRows, rowHasClient, rowHasSupplier, supplierCostByClientRow } from "../lib/jobSheetRows";
 import { round2 } from "../lib/feeCalculations";
@@ -54,6 +55,42 @@ export function JobSheetInternalDocument({
   const feeLabel = companyName === "Tuscany SA" ? "Silent partner 10%" : "NSA 10%";
   const feeAmount = companyName === "Tuscany SA" ? job.tuscanyFee : job.nsaFee;
 
+  // One job sheet is one page. The sheet is laid out at exactly the printable
+  // width of a landscape A4 page (see .jobsheet-print), so the height it has
+  // in the preview is the height it will have on paper — measure it, and hand
+  // the print stylesheet the factor that pulls it back inside the 190mm of
+  // printable height. Chrome fires beforeprint for Ctrl+P as well as for the
+  // button, so a sheet edited between opening the preview and printing still
+  // measures correctly.
+  //
+  // Floored rather than allowed to shrink without limit: past roughly half
+  // size nobody can read the thing, and a genuinely enormous sheet is more
+  // honestly two pages than one unreadable one.
+  const printRefScale = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = printRefScale.current;
+    if (!el) return;
+    function fitToOnePage() {
+      if (!el) return;
+      el.style.setProperty("--print-fit", "1");
+      const styles = getComputedStyle(el);
+      const printable = parseFloat(styles.getPropertyValue("--print-page-height"));
+      const content =
+        el.scrollHeight -
+        parseFloat(styles.paddingTop) -
+        parseFloat(styles.paddingBottom);
+      if (!printable || content <= 0) return;
+      // 3% back off the printable height. Chrome paginates on the zoomed
+      // layout's own fractional heights, and a sheet measured to land exactly
+      // on the boundary still tipped onto a second page.
+      const fit = Math.max(0.5, Math.min(1, (printable * 0.97) / content));
+      el.style.setProperty("--print-fit", String(fit));
+    }
+    fitToOnePage();
+    window.addEventListener("beforeprint", fitToOnePage);
+    return () => window.removeEventListener("beforeprint", fitToOnePage);
+  });
+
   async function handleDownload() {
     if (!printRef.current) return;
     setDownloadError(null);
@@ -73,7 +110,7 @@ export function JobSheetInternalDocument({
   }
 
   return (
-    <div className="nsa-doc-overlay">
+    <DocumentOverlay orientation="landscape">
       <div className="nsa-doc-toolbar no-print">
         <button type="button" className="btn-secondary" onClick={onClose}>
           Close
@@ -92,7 +129,13 @@ export function JobSheetInternalDocument({
         </button>
       </div>
 
-      <div className="nsa-quote-print jobsheet-print" ref={printRef}>
+      <div
+        className="nsa-quote-print jobsheet-print"
+        ref={(node) => {
+          printRef.current = node;
+          printRefScale.current = node;
+        }}
+      >
         <div className="jobsheet-print-head">
           <div>
             <h1>JOB SHEET</h1>
@@ -246,6 +289,6 @@ export function JobSheetInternalDocument({
           Internal costing sheet — not for the client.
         </p>
       </div>
-    </div>
+    </DocumentOverlay>
   );
 }

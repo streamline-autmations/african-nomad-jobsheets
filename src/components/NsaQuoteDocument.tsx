@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { DocumentOverlay } from "./DocumentOverlay";
 import { round2 } from "../lib/feeCalculations";
 import { NSA_COMPANY } from "../lib/nsaCompany";
 import { downloadElementAsPdf } from "../lib/pdfDownload";
@@ -58,7 +59,7 @@ export function NsaQuoteDocument({ quote, docType, onClose }: NsaQuoteDocumentPr
   }
 
   return (
-    <div className="nsa-doc-overlay">
+    <DocumentOverlay>
       <div className="nsa-doc-toolbar no-print">
         <button type="button" className="btn-secondary" onClick={onClose}>
           Close
@@ -198,6 +199,6 @@ export function NsaQuoteDocument({ quote, docType, onClose }: NsaQuoteDocumentPr
           </div>
         )}
       </div>
-    </div>
+    </DocumentOverlay>
   );
 }

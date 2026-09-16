@@ -12,6 +12,10 @@
   --success-bg: #eaf3ec;
   --warning: #b3792f;
   --warning-bg: #fdf1e2;
+  /* Printable area of a landscape A4 page at 10mm margins (DocumentOverlay's
+     @page rule), in CSS px at 96dpi: 277mm wide by 190mm tall. */
+  --print-page-width: 1047px;
+  --print-page-height: 718px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -1137,7 +1141,7 @@ button.sheet-gutter {
   inset: 0;
   background: var(--bg);
   z-index: 100;
-  overflow-y: auto;
+  overflow: auto;
   padding: 1.5rem;
 }
 
@@ -1273,18 +1277,30 @@ button.sheet-gutter {
 }
 
 @media print {
-  body * {
-    visibility: hidden;
+  /* Print isolation. The open document is portalled onto <body> (see
+     DocumentOverlay) so the rest of the app can be taken out of the print
+     layout with display:none. Hiding it with visibility instead — as this
+     used to — left every box in flow, and the job sheet form behind the
+     overlay is several screens tall, so its leftover height printed as a
+     blank trailing page. */
+  body > *:not(.nsa-doc-overlay) {
+    display: none !important;
   }
-  .nsa-quote-print,
-  .nsa-quote-print * {
-    visibility: visible;
+  html,
+  body {
+    background: #ffffff;
+  }
+  /* On screen the overlay is a fixed, scrolling shell; on paper it is just
+     the page itself, so it stops positioning and clipping its contents. */
+  .nsa-doc-overlay {
+    position: static;
+    overflow: visible;
+    padding: 0;
+    background: #ffffff;
   }
   .nsa-quote-print {
-    position: absolute;
-    top: 0;
-    left: 0;
     width: 100%;
+    max-width: none;
     margin: 0;
     padding: 0;
   }
@@ -1339,7 +1355,14 @@ button.sheet-gutter {
    what anything cost.
    --------------------------------------------------------------------------- */
 .jobsheet-print {
-  max-width: 1120px;
+  /* Laid out at exactly the printable width of a landscape A4 page with 10mm
+     margins (277mm at 96dpi), content-box so the on-screen padding sits
+     outside it. That makes the preview's measured height the same height the
+     sheet will have on paper, which is what the one-page fit below relies on
+     — see JobSheetInternalDocument. */
+  box-sizing: content-box;
+  width: var(--print-page-width);
+  max-width: none;
   font-size: 0.72rem;
 }
 
@@ -1496,8 +1519,37 @@ button.sheet-gutter {
 }
 
 @media print {
-  /* The internal sheet is landscape; the client documents stay portrait. */
+  /* Landscape A4 is set by DocumentOverlay's @page rule while the sheet is
+     open. One sheet is one page: --print-fit is measured by
+     JobSheetInternalDocument and shrinks the whole sheet just enough to fit
+     the 190mm of printable height. The width is divided by the same factor so
+     the sheet still spans the full page once zoom has scaled it back down —
+     shrinking to fit vertically must not leave the table half a page wide. */
   .jobsheet-print {
+    width: calc(var(--print-page-width) / var(--print-fit, 1));
     max-width: none;
+    zoom: var(--print-fit, 1);
+  }
+
+  /* The column-block tints carry the CLIENT / COMPANY EXPENSES split, which
+     is the whole point of the internal sheet — keep them on paper. */
+  .jobsheet-print-groups th,
+  .jobsheet-print-totals > dl {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* A row split across a page break is unreadable, and a table that breaks
+     mid-way should carry its headers over. */
+  .jobsheet-print-table tr {
+    break-inside: avoid;
+  }
+
+  .jobsheet-print-table thead {
+    display: table-header-group;
+  }
+
+  .jobsheet-print-totals {
+    break-inside: avoid;
   }
 }

@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { DocumentOverlay } from "./DocumentOverlay";
 import { getCompanyDetails } from "../lib/anCompany";
 import { downloadElementAsPdf } from "../lib/pdfDownload";
 import type { JobSheet } from "../types";
@@ -49,7 +50,7 @@ export function JobSheetDocument({ job, companyName, onClose }: JobSheetDocument
   }
 
   return (
-    <div className="nsa-doc-overlay">
+    <DocumentOverlay>
       <div className="nsa-doc-toolbar no-print">
         <button type="button" className="btn-secondary" onClick={onClose}>
           Close
@@ -163,6 +164,6 @@ export function JobSheetDocument({ job, companyName, onClose }: JobSheetDocument
           </div>
         )}
       </div>
-    </div>
+    </DocumentOverlay>
   );
 }
