@@ -57,15 +57,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // from a previously-connected company (e.g. Sandbox rows still sitting
   // around after switching to Production) — is removed. Without this the
   // mirror only ever grows, and a stale row is indistinguishable from a real
-  // one in the picker.
-  const syncedIds = customers.map((c) => `"${c.id}"`).join(",");
-  const { error: deleteError } = await supabase
+  // one in the picker. Computed client-side (fetch all ids, diff, .in()
+  // delete) rather than a hand-built not/in filter string, which turned out
+  // to silently match nothing.
+  const syncedIds = new Set(customers.map((c) => c.id));
+  const { data: existingIds, error: existingError } = await supabase
     .from("nsa_qbo_customers")
-    .delete()
-    .not("qbo_customer_id", "in", `(${syncedIds})`);
+    .select("qbo_customer_id");
 
-  if (deleteError) {
-    console.error("sync-nsa-customers: stale-row cleanup failed", deleteError);
+  if (existingError) {
+    console.error("sync-nsa-customers: could not read existing ids for cleanup", existingError);
+  } else {
+    const staleIds = (existingIds ?? [])
+      .map((row) => row.qbo_customer_id as string)
+      .filter((id) => !syncedIds.has(id));
+
+    if (staleIds.length > 0) {
+      const { error: deleteError } = await supabase
+        .from("nsa_qbo_customers")
+        .delete()
+        .in("qbo_customer_id", staleIds);
+      if (deleteError) {
+        console.error("sync-nsa-customers: stale-row cleanup failed", deleteError);
+      }
+    }
   }
 
   res.status(200).json({ success: true, synced: rows.length });
