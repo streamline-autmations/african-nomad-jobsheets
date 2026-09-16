@@ -7,10 +7,8 @@ import {
   saveNsaQuoteDraft,
 } from "../lib/nsaQuotes";
 import {
-  fetchNsaQboCustomers,
-  fetchNsaQboCustomersFresh,
   nsaQboCustomerLabel,
-  syncNsaQboCustomers,
+  syncAndFetchNsaQboCustomers,
   type NsaQboCustomer,
 } from "../lib/nsaQboCustomers";
 import type { LineItemInput } from "../types";
@@ -48,7 +46,7 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
   // least once.
   const [qboCustomers, setQboCustomers] = useState<NsaQboCustomer[]>([]);
   const [qboCustomersError, setQboCustomersError] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
+  const [syncing, setSyncing] = useState(true);
   const [isManualClient, setIsManualClient] = useState(true);
   const [selectedQboCustomerId, setSelectedQboCustomerId] = useState<string | null>(null);
 
@@ -56,40 +54,28 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  function loadQboCustomers() {
-    fetchNsaQboCustomers()
-      .then((data) => {
-        setQboCustomers(data);
-        setQboCustomersError(null);
-      })
-      .catch((err: unknown) => setQboCustomersError(errorMessage(err)));
-  }
-
-  // First load auto-syncs if the mirror is stale/empty (see
-  // fetchNsaQboCustomersFresh) so this list stays current without anyone
-  // having to remember to click "Sync from QuickBooks" — that button still
-  // exists below for an on-demand refresh.
+  // Every time this form opens, it syncs from QuickBooks for real — no
+  // staleness check, no manual button. A failed sync still falls back to
+  // whatever's already in the mirror rather than leaving the picker empty.
   useEffect(() => {
-    fetchNsaQboCustomersFresh()
-      .then((data) => {
-        setQboCustomers(data);
-        setQboCustomersError(null);
-      })
-      .catch((err: unknown) => setQboCustomersError(errorMessage(err)));
-  }, []);
-
-  async function handleSync() {
-    setQboCustomersError(null);
+    let cancelled = false;
     setSyncing(true);
-    try {
-      await syncNsaQboCustomers();
-      loadQboCustomers();
-    } catch (err) {
-      setQboCustomersError(errorMessage(err));
-    } finally {
-      setSyncing(false);
-    }
-  }
+    syncAndFetchNsaQboCustomers()
+      .then(({ customers, syncError }) => {
+        if (cancelled) return;
+        setQboCustomers(customers);
+        setQboCustomersError(syncError);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setQboCustomersError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setSyncing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function handleSelectQboCustomer(qboCustomerId: string) {
     const customer = qboCustomers.find((c) => c.qboCustomerId === qboCustomerId);
@@ -288,12 +274,11 @@ export function NsaQuoteForm({ onSaved }: NsaQuoteFormProps) {
 
           {!isManualClient && (
             <p className="field-hint">
-              {qboCustomers.length === 0
-                ? "No customers synced yet."
-                : `${qboCustomers.length} customer(s) synced${qboCustomers[0]?.lastSyncedAt ? ` — last synced ${new Date(qboCustomers[0].lastSyncedAt!).toLocaleString()}` : ""}.`}{" "}
-              <button type="button" className="btn-secondary" disabled={syncing} onClick={handleSync}>
-                {syncing ? "Syncing…" : "Sync from QuickBooks"}
-              </button>
+              {syncing
+                ? "Syncing customers from QuickBooks…"
+                : qboCustomers.length === 0
+                  ? "No customers synced from QuickBooks yet."
+                  : `${qboCustomers.length} customer(s) from QuickBooks.`}
             </p>
           )}
 

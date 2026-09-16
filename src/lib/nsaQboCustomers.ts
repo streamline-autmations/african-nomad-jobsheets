@@ -111,30 +111,27 @@ export async function fetchNsaQboCustomerByQboId(
   return data ? toNsaQboCustomer(data) : null;
 }
 
-const STALE_AFTER_MS = 60 * 60 * 1000;
+export interface SyncAndFetchResult {
+  customers: NsaQboCustomer[];
+  /** Set if the sync call itself failed — customers is still whatever was
+   * already in the mirror, so a transient QBO/network failure never leaves
+   * the picker empty, it just means the list might be a bit stale. */
+  syncError: string | null;
+}
 
 /**
- * Fetches the synced customer list, silently kicking off a real sync first
- * if it's never been synced or the newest row is over an hour old — so
- * opening the Job Sheet / NSA Quote form keeps this fresh on its own instead
- * of depending on someone remembering to click "Sync from QuickBooks".
- * Falls back to whatever's cached if the background sync fails; that button
- * still exists for a manual retry when something's actually broken.
+ * Always triggers a real sync from QuickBooks — no staleness check, every
+ * time a form using this opens it should reflect QuickBooks right now — then
+ * returns whatever's in the mirror regardless of whether the sync itself
+ * succeeded.
  */
-export async function fetchNsaQboCustomersFresh(): Promise<NsaQboCustomer[]> {
-  const customers = await fetchNsaQboCustomers();
-  const newestSync = customers.reduce<number>((latest, c) => {
-    if (!c.lastSyncedAt) return latest;
-    const t = new Date(c.lastSyncedAt).getTime();
-    return t > latest ? t : latest;
-  }, 0);
-  const isStale = customers.length === 0 || Date.now() - newestSync > STALE_AFTER_MS;
-  if (!isStale) return customers;
-
+export async function syncAndFetchNsaQboCustomers(): Promise<SyncAndFetchResult> {
+  let syncError: string | null = null;
   try {
     await syncNsaQboCustomers();
-    return await fetchNsaQboCustomers();
-  } catch {
-    return customers;
+  } catch (err) {
+    syncError = err instanceof Error ? err.message : String(err);
   }
+  const customers = await fetchNsaQboCustomers();
+  return { customers, syncError };
 }

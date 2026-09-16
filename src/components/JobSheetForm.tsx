@@ -1,26 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { CompanySelect } from "./CompanySelect";
-import { CustomerSelect } from "./CustomerSelect";
 import { JobSheetLinesGrid } from "./JobSheetLinesGrid";
 import { JobSheetInternalDocument } from "./JobSheetInternalDocument";
 import { JobSheetDocument } from "./JobSheetDocument";
 import { calculateJobSheetFinancials, withLineTotal } from "../lib/feeCalculations";
 import { linesToSheetRows, sheetRowsToLines, type SheetRow } from "../lib/jobSheetRows";
+import { fetchCommonExpenses, fetchCompanies, fetchJobSheetById, saveJobSheetDraft } from "../lib/jobSheets";
 import {
-  fetchCommonExpenses,
-  fetchCompanies,
-  fetchCustomers,
-  fetchJobSheetById,
-  saveJobSheetDraft,
-} from "../lib/jobSheets";
-import {
-  fetchNsaQboCustomers,
-  fetchNsaQboCustomersFresh,
   nsaQboCustomerLabel,
-  syncNsaQboCustomers,
+  syncAndFetchNsaQboCustomers,
   type NsaQboCustomer,
 } from "../lib/nsaQboCustomers";
-import type { CommonExpense, Company, Customer, JobSheet } from "../types";
+import type { CommonExpense, Company, JobSheet } from "../types";
 import { errorMessage } from "../lib/errors";
 
 interface JobSheetFormProps {
@@ -34,26 +25,26 @@ interface JobSheetFormProps {
 
 export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps) {
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [commonExpenses, setCommonExpenses] = useState<CommonExpense[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [loadingExisting, setLoadingExisting] = useState(false);
   const [companyId, setCompanyId] = useState("");
-  const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerNameRaw, setCustomerNameRaw] = useState("");
+  // True means "not in QuickBooks yet, type the name" — the customer picker
+  // below is the real QBO customer mirror (nsa_qbo_customers), not the old
+  // customers table (that one was a QBD mirror that was never actually kept
+  // in sync with anything and has been retired from this form).
   const [isNewCustomer, setIsNewCustomer] = useState(false);
 
-  // Real customers mirrored from NSA's QuickBooks Online company (see
-  // api/qbo/sync-nsa-customers.ts). Separate from the CustomerSelect/
-  // customers table above (the old, never-actually-synced QBD mirror) —
-  // linking a job sheet to one of these is what lets the eventual NSA quote/
-  // invoice hand-off (ApprovalView) auto-fill vendor number and address
-  // instead of retyping them.
+  // Real customers mirrored from the connected QuickBooks Online company
+  // (see api/qbo/sync-nsa-customers.ts). Linking a job sheet to one of these
+  // is what lets the eventual NSA quote/invoice hand-off (ApprovalView)
+  // auto-fill vendor number and address instead of retyping them.
   const [qboCustomers, setQboCustomers] = useState<NsaQboCustomer[]>([]);
   const [qboCustomersError, setQboCustomersError] = useState<string | null>(null);
-  const [syncingQboCustomers, setSyncingQboCustomers] = useState(false);
+  const [syncingQboCustomers, setSyncingQboCustomers] = useState(true);
   const [selectedQboCustomerId, setSelectedQboCustomerId] = useState<string | null>(null);
 
   const [jobDescription, setJobDescription] = useState("");
@@ -72,11 +63,10 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchCompanies(), fetchCustomers(), fetchCommonExpenses()])
-      .then(([companiesData, customersData, expensesData]) => {
+    Promise.all([fetchCompanies(), fetchCommonExpenses()])
+      .then(([companiesData, expensesData]) => {
         if (cancelled) return;
         setCompanies(companiesData);
-        setCustomers(customersData);
         setCommonExpenses(expensesData);
       })
       .catch((err: unknown) => {
@@ -88,46 +78,28 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
     };
   }, []);
 
-  // Auto-syncs if the mirror is stale/empty (see fetchNsaQboCustomersFresh)
-  // so this list stays current without anyone having to remember to click
-  // "Sync from QuickBooks" first.
+  // Every time this form opens, it syncs from QuickBooks for real — no
+  // staleness check, no manual button. A failed sync still falls back to
+  // whatever's already in the mirror rather than leaving the picker empty.
   useEffect(() => {
     let cancelled = false;
-    fetchNsaQboCustomersFresh()
-      .then((data) => {
+    setSyncingQboCustomers(true);
+    syncAndFetchNsaQboCustomers()
+      .then(({ customers, syncError }) => {
         if (cancelled) return;
-        setQboCustomers(data);
-        setQboCustomersError(null);
+        setQboCustomers(customers);
+        setQboCustomersError(syncError);
       })
       .catch((err: unknown) => {
         if (!cancelled) setQboCustomersError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setSyncingQboCustomers(false);
       });
     return () => {
       cancelled = true;
     };
   }, []);
-
-  function loadQboCustomers() {
-    fetchNsaQboCustomers()
-      .then((data) => {
-        setQboCustomers(data);
-        setQboCustomersError(null);
-      })
-      .catch((err: unknown) => setQboCustomersError(errorMessage(err)));
-  }
-
-  async function handleSyncQboCustomers() {
-    setQboCustomersError(null);
-    setSyncingQboCustomers(true);
-    try {
-      await syncNsaQboCustomers();
-      loadQboCustomers();
-    } catch (err) {
-      setQboCustomersError(errorMessage(err));
-    } finally {
-      setSyncingQboCustomers(false);
-    }
-  }
 
   useEffect(() => {
     if (!editJobSheetId) return;
@@ -138,9 +110,8 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
         if (cancelled) return;
         setEditingId(job.id);
         setCompanyId(job.companyId);
-        setCustomerId(job.customerId);
         setCustomerNameRaw(job.customerNameRaw);
-        setIsNewCustomer(job.customerId === null);
+        setIsNewCustomer(job.qboCustomerId === null);
         setSelectedQboCustomerId(job.qboCustomerId);
         setJobDescription(job.jobDescription);
         setEventDate(job.eventDate ?? "");
@@ -179,7 +150,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
     () => ({
       id: editingId ?? "draft",
       companyId,
-      customerId: isNewCustomer ? null : customerId,
+      customerId: null,
       customerNameRaw,
       qboCustomerId: selectedQboCustomerId,
       jobDescription,
@@ -198,8 +169,6 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
     [
       editingId,
       companyId,
-      isNewCustomer,
-      customerId,
       customerNameRaw,
       selectedQboCustomerId,
       jobDescription,
@@ -212,7 +181,6 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
 
   function resetForm() {
     setCompanyId("");
-    setCustomerId(null);
     setCustomerNameRaw("");
     setIsNewCustomer(false);
     setSelectedQboCustomerId(null);
@@ -229,8 +197,8 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
       setSaveError("Select a company before saving.");
       return;
     }
-    if (!isNewCustomer && !customerId) {
-      setSaveError("Select a customer, or tick \"this customer doesn't exist yet\".");
+    if (!isNewCustomer && !selectedQboCustomerId) {
+      setSaveError("Select a customer, or tick \"this customer isn't in QuickBooks yet\".");
       return;
     }
     if (isNewCustomer && !customerNameRaw.trim()) {
@@ -244,9 +212,9 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
         id: editingId,
         companyId,
         companyName: selectedCompany?.name ?? "",
-        customerId: isNewCustomer ? null : customerId,
+        customerId: null,
         customerNameRaw,
-        qboCustomerId: selectedQboCustomerId,
+        qboCustomerId: isNewCustomer ? null : selectedQboCustomerId,
         jobDescription,
         eventDate: eventDate || null,
         clientLines: clientLines.map(withLineTotal),
@@ -294,51 +262,63 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
       <div className="form-grid">
         <CompanySelect companies={companies} value={companyId} onChange={setCompanyId} />
 
-        <CustomerSelect
-          customers={customers}
-          customerId={customerId}
-          customerNameRaw={customerNameRaw}
-          isNewCustomer={isNewCustomer}
-          onSelectExisting={(id, name) => {
-            setCustomerId(id);
-            setCustomerNameRaw(name);
-          }}
-          onToggleNew={(isNew) => {
-            setIsNewCustomer(isNew);
-            setCustomerId(null);
-            setCustomerNameRaw("");
-          }}
-          onNewNameChange={setCustomerNameRaw}
-        />
-
         <div className="field">
-          <span>Link to a real QuickBooks customer (optional)</span>
-          <select
-            value={selectedQboCustomerId ?? ""}
-            onChange={(e) => setSelectedQboCustomerId(e.target.value || null)}
-          >
-            <option value="">Not linked</option>
-            {qboCustomers.map((customer) => (
-              <option key={customer.qboCustomerId} value={customer.qboCustomerId}>
-                {nsaQboCustomerLabel(customer, qboCustomers)}
-              </option>
-            ))}
-          </select>
-          <p className="field-hint">
-            {qboCustomers.length === 0
-              ? "No customers synced yet."
-              : `${qboCustomers.length} customer(s) synced.`}{" "}
-            Linking one lets an NSA quote or invoice made from this job sheet
-            auto-fill vendor number and address instead of retyping them.{" "}
-            <button
-              type="button"
-              className="btn-secondary"
-              disabled={syncingQboCustomers}
-              onClick={handleSyncQboCustomers}
+          <span>Customer</span>
+
+          {!isNewCustomer && (
+            <select
+              value={selectedQboCustomerId ?? ""}
+              onChange={(e) => {
+                const customer = qboCustomers.find((c) => c.qboCustomerId === e.target.value);
+                if (!customer) return;
+                setSelectedQboCustomerId(customer.qboCustomerId);
+                setCustomerNameRaw(nsaQboCustomerLabel(customer, qboCustomers));
+              }}
+              required
             >
-              {syncingQboCustomers ? "Syncing…" : "Sync from QuickBooks"}
-            </button>
-          </p>
+              <option value="" disabled>
+                {syncingQboCustomers ? "Syncing from QuickBooks…" : "Select a customer…"}
+              </option>
+              {qboCustomers.map((customer) => (
+                <option key={customer.qboCustomerId} value={customer.qboCustomerId}>
+                  {nsaQboCustomerLabel(customer, qboCustomers)}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {isNewCustomer && (
+            <input
+              type="text"
+              placeholder="Type the new customer's name"
+              value={customerNameRaw}
+              onChange={(e) => setCustomerNameRaw(e.target.value)}
+              required
+            />
+          )}
+
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={isNewCustomer}
+              onChange={(e) => {
+                setIsNewCustomer(e.target.checked);
+                setSelectedQboCustomerId(null);
+                setCustomerNameRaw("");
+              }}
+            />
+            This customer isn&apos;t in QuickBooks yet
+          </label>
+
+          {!isNewCustomer && (
+            <p className="field-hint">
+              {qboCustomers.length === 0
+                ? "No customers synced from QuickBooks yet."
+                : `${qboCustomers.length} customer(s) from QuickBooks.`}{" "}
+              Vendor number and address on a later NSA quote/invoice auto-fill from whichever
+              customer is picked here.
+            </p>
+          )}
           {qboCustomersError && <div className="banner banner-error">{qboCustomersError}</div>}
         </div>
 
