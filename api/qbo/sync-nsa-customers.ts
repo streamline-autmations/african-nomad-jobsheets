@@ -65,6 +65,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .from("nsa_qbo_customers")
     .select("qbo_customer_id");
 
+  // TEMP diagnostics (2026-09-16): the previous two cleanup attempts both
+  // verifiably deleted nothing over repeated live retries, for no error
+  // visible in the plain success response — surfacing the actual numbers
+  // here instead of guessing blind. Remove once the real cause is found.
+  let debugInfo: Record<string, unknown> = {
+    existingCount: existingIds?.length ?? null,
+    existingError: existingError?.message ?? null,
+  };
+
   if (existingError) {
     console.error("sync-nsa-customers: could not read existing ids for cleanup", existingError);
   } else {
@@ -72,16 +81,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .map((row) => row.qbo_customer_id as string)
       .filter((id) => !syncedIds.has(id));
 
+    debugInfo = { ...debugInfo, staleCount: staleIds.length, staleIds: staleIds.slice(0, 5) };
+
     if (staleIds.length > 0) {
-      const { error: deleteError } = await supabase
+      const { error: deleteError, count } = await supabase
         .from("nsa_qbo_customers")
-        .delete()
+        .delete({ count: "exact" })
         .in("qbo_customer_id", staleIds);
+      debugInfo = { ...debugInfo, deleteError: deleteError?.message ?? null, deletedCount: count };
       if (deleteError) {
         console.error("sync-nsa-customers: stale-row cleanup failed", deleteError);
       }
     }
   }
 
-  res.status(200).json({ success: true, synced: rows.length });
+  res.status(200).json({ success: true, synced: rows.length, debugInfo });
 }
