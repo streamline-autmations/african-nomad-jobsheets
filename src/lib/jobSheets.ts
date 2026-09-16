@@ -1,5 +1,6 @@
 import { supabase, supabaseConfigured } from "./supabase";
-import { calculateJobSheetFinancials, round2 } from "./feeCalculations";
+import { calculateJobSheetFinancials, round2, withLineTotal } from "./feeCalculations";
+import { emptySheetRow, linesToSheetRows, rowIsBlank, sheetRowsToLines, type SheetRow } from "./jobSheetRows";
 import type {
   CommonExpense,
   Company,
@@ -258,6 +259,71 @@ export async function deleteJobSheetDraft(id: string): Promise<void> {
   if (!data || data.length === 0) {
     throw new Error("Couldn't delete — it may no longer be a draft.");
   }
+}
+
+// TEMP TOOL (added 2026-09-07): combines several draft job sheets for the
+// same company/customer into one, e.g. several small quotes for one project
+// that should ship to QuickBooks as a single estimate. Rebuilds a single row
+// grid across all of them (via jobSheetRows' round-trip helpers, the same
+// ones the editor grid itself uses) with one blank separator row between each
+// source sheet, so the "which supplier costs back which client line" grouping
+// never bleeds from one source sheet's lines into the next one's. Deletes the
+// source drafts only after the combined sheet is saved. Not wired to a
+// permanent nav entry — see the discreet toggle in ApprovalView.
+function trimTrailingBlankRows(rows: SheetRow[]): SheetRow[] {
+  let end = rows.length;
+  while (end > 0 && rowIsBlank(rows[end - 1])) end -= 1;
+  return rows.slice(0, end);
+}
+
+export async function mergeDraftJobSheets(
+  sheets: JobSheet[],
+  companyName: string,
+  jobDescription: string,
+): Promise<JobSheet> {
+  if (sheets.length < 2) {
+    throw new Error("Pick at least two draft job sheets to combine.");
+  }
+  if (sheets.some((s) => s.status !== "draft")) {
+    throw new Error("Only draft job sheets can be combined.");
+  }
+  const [first, ...rest] = sheets;
+  if (rest.some((s) => s.companyId !== first.companyId)) {
+    throw new Error("Can't combine job sheets from different companies.");
+  }
+  const sameCustomer = (s: JobSheet) =>
+    first.customerId ? s.customerId === first.customerId : s.customerNameRaw === first.customerNameRaw;
+  if (rest.some((s) => !sameCustomer(s))) {
+    throw new Error("Can't combine job sheets for different customers.");
+  }
+
+  let mergedRows: SheetRow[] = [];
+  for (const sheet of sheets) {
+    const rows = trimTrailingBlankRows(linesToSheetRows(sheet.clientLines, sheet.expenseLines));
+    if (rows.length === 0) continue;
+    if (mergedRows.length > 0) mergedRows.push(emptySheetRow());
+    mergedRows = mergedRows.concat(rows);
+  }
+
+  const { clientLines, expenseLines } = sheetRowsToLines(mergedRows);
+
+  const saved = await saveJobSheetDraft({
+    companyId: first.companyId,
+    companyName,
+    customerId: first.customerId,
+    customerNameRaw: first.customerNameRaw,
+    qboCustomerId: first.qboCustomerId,
+    jobDescription,
+    eventDate: first.eventDate,
+    clientLines: clientLines.map(withLineTotal),
+    expenseLines: expenseLines.map(withLineTotal),
+  });
+
+  for (const sheet of sheets) {
+    await deleteJobSheetDraft(sheet.id);
+  }
+
+  return saved;
 }
 
 // The only path that ever writes to qbd_sync_queue: calls the
