@@ -53,5 +53,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  // Anything not returned by this sync — deactivated in QBO, or a leftover
+  // from a previously-connected company (e.g. Sandbox rows still sitting
+  // around after switching to Production) — is removed. Without this the
+  // mirror only ever grows, and a stale row is indistinguishable from a real
+  // one in the picker.
+  const syncedIds = customers.map((c) => `"${c.id}"`).join(",");
+  const { error: deleteError } = await supabase
+    .from("nsa_qbo_customers")
+    .delete()
+    .not("qbo_customer_id", "in", `(${syncedIds})`);
+
+  if (deleteError) {
+    console.error("sync-nsa-customers: stale-row cleanup failed", deleteError);
+  }
+
   res.status(200).json({ success: true, synced: rows.length });
 }
