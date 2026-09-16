@@ -329,10 +329,17 @@ async function findNextDocNumber(
   conn: QboConnection,
   entity: "Estimate" | "Invoice",
 ): Promise<string | null> {
-  const query = `select * from ${entity} orderby Id desc maxresults 1`;
+  // Looks past the single most recent record on purpose — a document created
+  // before this numbering logic existed (or one some other integration
+  // created) can have a blank DocNumber, and basing "next" off a blank would
+  // compute nothing. Walks back through recent history for the last one that
+  // actually has a number.
+  const query = `select * from ${entity} orderby Id desc maxresults 25`;
   const result = await qboFetch(conn, `/query?query=${encodeURIComponent(query)}`);
-  const last = result.QueryResponse?.[entity]?.[0]?.DocNumber as string | undefined;
-  return nextDocNumber(last);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw QBO Estimate/Invoice payloads
+  const records = (result.QueryResponse?.[entity] ?? []) as any[];
+  const lastWithNumber = records.find((r) => r.DocNumber);
+  return nextDocNumber(lastWithNumber?.DocNumber);
 }
 
 export async function createEstimate(input: {
