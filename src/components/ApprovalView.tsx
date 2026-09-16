@@ -4,10 +4,11 @@ import {
   deleteJobSheetDraft,
   fetchCompanies,
   fetchDraftJobSheets,
+  mergeDraftJobSheets,
 } from "../lib/jobSheets";
 import { fetchLatestNsaQuoteForClient, fetchNsaQuoteById } from "../lib/nsaQuotes";
 import { fetchNsaQboCustomerByQboId } from "../lib/nsaQboCustomers";
-import { convertJobSheetToNsaQuote } from "../lib/jobSheetToNsaQuote";
+import { convertJobSheetToNsaInvoice, convertJobSheetToNsaQuote } from "../lib/jobSheetToNsaQuote";
 import type { Company, JobSheet } from "../types";
 import type { NsaQuote } from "../nsaTypes";
 import { errorMessage } from "../lib/errors";
@@ -17,7 +18,6 @@ interface ApprovalViewProps {
 }
 
 const EMPTY_QUOTE_FIELDS = {
-  quoteNumber: "",
   vendorNumber: "",
   poNumber: "",
   clientAddress: "",
@@ -35,6 +35,15 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [companyTab, setCompanyTab] = useState<string>("all");
   const [search, setSearch] = useState("");
+
+  // Temp tool (2026-09-07): combine several drafts for the same job into one
+  // before approving. Deliberately kept out of the normal toolbar — this is a
+  // discreet, occasional-use link rather than a permanent button.
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergeSelectedIds, setMergeSelectedIds] = useState<Set<string>>(new Set());
+  const [mergeDescription, setMergeDescription] = useState("");
+  const [merging, setMerging] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
 
   // NSA quote hand-off state.
   const [quoteFormOpen, setQuoteFormOpen] = useState(false);
@@ -161,15 +170,26 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
     }
   }
 
-  async function handleCreateNsaQuote(jobSheet: JobSheet) {
+  async function handleCreateNsaDoc(jobSheet: JobSheet, kind: "quote" | "invoice") {
     setQuoteError(null);
     setQuoteMessage(null);
     setQuoteBusy(true);
     try {
-      const quote = await convertJobSheetToNsaQuote(jobSheet, quoteFields);
-      setQuoteMessage(
-        `NSA quote ${quote.quoteNumber || "(unnumbered)"} created as a draft — open the NSA Quotes tab to print it and send it to the mine.`,
-      );
+      const { quote, pushError } =
+        kind === "quote"
+          ? await convertJobSheetToNsaQuote(jobSheet, quoteFields)
+          : await convertJobSheetToNsaInvoice(jobSheet, quoteFields);
+
+      if (pushError) {
+        setQuoteMessage(
+          `NSA ${kind} created, but pushing it to QuickBooks failed (${pushError}). ` +
+            'Open the NSA Quotes tab and use "Push to QuickBooks Online" to retry.',
+        );
+      } else {
+        setQuoteMessage(
+          `NSA ${kind} ${quote.quoteNumber || "(unnumbered)"} created in QuickBooks — open the NSA Quotes tab to view or print it.`,
+        );
+      }
       setQuoteFormOpen(false);
       setQuoteFields(EMPTY_QUOTE_FIELDS);
       load();
@@ -217,6 +237,51 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
       setDeleteError(errorMessage(err));
     } finally {
       setDeleting(false);
+    }
+  }
+
+  function toggleMergeMode() {
+    setMergeMode((on) => !on);
+    setMergeSelectedIds(new Set());
+    setMergeDescription("");
+    setMergeError(null);
+    setSelectedId(null);
+  }
+
+  function toggleMergeSelected(id: string) {
+    setMergeSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const mergeCandidates = drafts.filter((d) => mergeSelectedIds.has(d.id));
+
+  async function handleCombine() {
+    setMergeError(null);
+    const description = mergeDescription.trim();
+    if (!description) {
+      setMergeError("Give the combined job sheet a description first.");
+      return;
+    }
+    const companyName = companies.find((c) => c.id === mergeCandidates[0]?.companyId)?.name ?? "";
+    const confirmed = window.confirm(
+      `Combine these ${mergeCandidates.length} drafts into one job sheet ("${description}")? ` +
+        "The original drafts will be deleted once the combined one is saved.",
+    );
+    if (!confirmed) return;
+
+    setMerging(true);
+    try {
+      await mergeDraftJobSheets(mergeCandidates, companyName, description);
+      toggleMergeMode();
+      load();
+    } catch (err) {
+      setMergeError(errorMessage(err));
+    } finally {
+      setMerging(false);
     }
   }
 
@@ -268,18 +333,67 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
 
         {visibleDrafts.length === 0 && <p>No job sheets match this filter.</p>}
 
-        {visibleDrafts.map((sheet) => (
-          <button
-            key={sheet.id}
-            type="button"
-            className={`approval-list-item ${sheet.id === selectedId ? "selected" : ""}`}
-            onClick={() => setSelectedId(sheet.id)}
-          >
-            <strong>{sheet.customerNameRaw || "Unnamed customer"}</strong>
-            <span>{sheet.jobDescription || "No description"}</span>
-            <span>Profit margin {sheet.netMarginPct.toFixed(1)}%</span>
+        {visibleDrafts.map((sheet) =>
+          mergeMode ? (
+            <label key={sheet.id} className="approval-list-item merge-selectable">
+              <span className="checkbox-inline">
+                <input
+                  type="checkbox"
+                  checked={mergeSelectedIds.has(sheet.id)}
+                  onChange={() => toggleMergeSelected(sheet.id)}
+                />
+                Select
+              </span>
+              <strong>{sheet.customerNameRaw || "Unnamed customer"}</strong>
+              <span>{sheet.jobDescription || "No description"}</span>
+              <span>Profit margin {sheet.netMarginPct.toFixed(1)}%</span>
+            </label>
+          ) : (
+            <button
+              key={sheet.id}
+              type="button"
+              className={`approval-list-item ${sheet.id === selectedId ? "selected" : ""}`}
+              onClick={() => setSelectedId(sheet.id)}
+            >
+              <strong>{sheet.customerNameRaw || "Unnamed customer"}</strong>
+              <span>{sheet.jobDescription || "No description"}</span>
+              <span>Profit margin {sheet.netMarginPct.toFixed(1)}%</span>
+            </button>
+          ),
+        )}
+
+        {mergeMode && (
+          <div className="merge-panel">
+            <p className="field-hint">{mergeCandidates.length} selected</p>
+            <input
+              type="text"
+              className="job-sheet-search"
+              placeholder="Combined job description…"
+              value={mergeDescription}
+              onChange={(e) => setMergeDescription(e.target.value)}
+            />
+            {mergeError && <div className="banner banner-error">{mergeError}</div>}
+            <div className="line-items-header">
+              <button type="button" className="btn-secondary" disabled={merging} onClick={toggleMergeMode}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={merging || mergeCandidates.length < 2}
+                onClick={handleCombine}
+              >
+                {merging ? "Combining…" : `Combine ${mergeCandidates.length} into one`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!mergeMode && (
+          <button type="button" className="link-button" onClick={toggleMergeMode}>
+            combine drafts…
           </button>
-        ))}
+        )}
       </div>
 
       {selected && (
@@ -333,26 +447,17 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
               </p>
             ) : quoteFormOpen ? (
               <>
-                <h4>Create the NSA quote for the mine</h4>
+                <h4>Create the NSA quote or invoice for the mine</h4>
                 <p className="section-description">
                   Copies the {selected.clientLines.length} client line
-                  {selected.clientLines.length === 1 ? "" : "s"} onto an NSA-branded quote.
-                  Supplier costs never cross over — the mine only ever sees NSA.
+                  {selected.clientLines.length === 1 ? "" : "s"} onto an NSA-branded document and
+                  pushes it straight into QuickBooks — the quote/invoice number comes back from
+                  QuickBooks itself, not typed by hand. Supplier costs never cross over — the mine
+                  only ever sees NSA.
                 </p>
                 {prefillNote && <p className="field-hint">{prefillNote}</p>}
 
                 <div className="nsa-handoff-fields">
-                  <label className="field">
-                    <span>Quote number</span>
-                    <input
-                      type="text"
-                      value={quoteFields.quoteNumber}
-                      placeholder="e.g. 1291"
-                      onChange={(e) =>
-                        setQuoteFields((f) => ({ ...f, quoteNumber: e.target.value }))
-                      }
-                    />
-                  </label>
                   <label className="field">
                     <span>Vendor number</span>
                     <input
@@ -386,11 +491,6 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
                   </label>
                 </div>
 
-                <p className="field-hint">
-                  Quote and vendor numbers are free text on purpose — NSA's own system assigns
-                  them, and we must not collide with her sequence.
-                </p>
-
                 <div className="line-items-header">
                   <button
                     type="button"
@@ -402,11 +502,19 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
                   </button>
                   <button
                     type="button"
-                    className="btn-primary"
-                    disabled={quoteBusy || !quoteFields.quoteNumber.trim()}
-                    onClick={() => handleCreateNsaQuote(selected)}
+                    className="btn-secondary"
+                    disabled={quoteBusy}
+                    onClick={() => handleCreateNsaDoc(selected, "quote")}
                   >
-                    {quoteBusy ? "Creating…" : "Create NSA quote"}
+                    {quoteBusy ? "Creating…" : "Create Quote in QuickBooks"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={quoteBusy}
+                    onClick={() => handleCreateNsaDoc(selected, "invoice")}
+                  >
+                    {quoteBusy ? "Creating…" : "Create Invoice in QuickBooks"}
                   </button>
                 </div>
               </>
@@ -422,7 +530,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
                 }
                 onClick={() => openQuoteForm(selected)}
               >
-                Create NSA quote for the mine →
+                Create NSA quote or invoice for the mine →
               </button>
             )}
           </div>

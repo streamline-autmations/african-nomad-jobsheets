@@ -5,6 +5,7 @@ import {
   markNsaQuoteAccepted,
   markNsaQuoteInvoiced,
   markNsaQuoteSent,
+  pushNsaQuoteToQbo,
 } from "../lib/nsaQuotes";
 import { convertNsaQuoteToJobSheet } from "../lib/nsaToJobSheet";
 import { NsaQuoteDocument } from "./NsaQuoteDocument";
@@ -128,16 +129,13 @@ export function NsaQuoteList() {
     setActionMessage(null);
     setBusy(true);
     try {
-      const res = await fetch("/api/qbo/push-nsa-quote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quoteId: quote.id }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Push to QuickBooks failed.");
+      const { qboDocNumber } = await pushNsaQuoteToQbo(quote.id);
       setActionMessage(
-        `Sent to QuickBooks Online as ${quote.status === "invoiced" ? "Invoice" : "Estimate"} ${body.qboDocNumber} — check your connected QBO company.`,
+        `Sent to QuickBooks Online as ${quote.status === "invoiced" ? "Invoice" : "Estimate"} ${qboDocNumber} — check your connected QBO company.`,
       );
+      // The push writes the real QBO number back onto the row — reload so
+      // the number shown here (and on the printed document) matches it.
+      load();
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {

@@ -258,11 +258,15 @@ interface QboDocResult {
 
 export async function createEstimate(input: {
   customerName: string;
+  /** The real QBO Customer.Id, when known (e.g. picked from the synced
+   * nsa_qbo_customers mirror) — skips the name-based find-or-create lookup,
+   * which matters once two different customers could share a display name. */
+  customerId?: string;
   lines: QboLine[];
   itemName?: string;
 }): Promise<QboDocResult> {
   const conn = await getActiveConnection();
-  const customerId = await findOrCreateCustomer(conn, input.customerName);
+  const customerId = input.customerId ?? (await findOrCreateCustomer(conn, input.customerName));
   const Line = await buildLines(conn, input.lines, input.itemName ?? "Job Sheet Line");
 
   const result = await qboFetch(conn, "/estimate", {
@@ -274,11 +278,12 @@ export async function createEstimate(input: {
 
 export async function createInvoice(input: {
   customerName: string;
+  customerId?: string;
   lines: QboLine[];
   itemName?: string;
 }): Promise<QboDocResult> {
   const conn = await getActiveConnection();
-  const customerId = await findOrCreateCustomer(conn, input.customerName);
+  const customerId = input.customerId ?? (await findOrCreateCustomer(conn, input.customerName));
   const Line = await buildLines(conn, input.lines, input.itemName ?? "Job Sheet Line");
 
   const result = await qboFetch(conn, "/invoice", {

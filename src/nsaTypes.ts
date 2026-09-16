@@ -15,6 +15,9 @@ export interface NsaQuote {
   clientAddress: string;
   /** Set once this quote/invoice was raised against a real QBO customer picked from the synced list, rather than free-typed. */
   qboCustomerId: string | null;
+  /** The real QBO Estimate/Invoice Id, once pushed — lets a retry reference the same record instead of creating a duplicate. */
+  qboEstimateId: string | null;
+  qboInvoiceId: string | null;
   jobDescription: string;
   eventDate: string | null;
   status: NsaQuoteStatus;

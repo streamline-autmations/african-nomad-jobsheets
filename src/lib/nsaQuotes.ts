@@ -58,6 +58,8 @@ type NsaQuoteRow = {
   client_name: string;
   client_address: string;
   qbo_customer_id: string | null;
+  qbo_estimate_id: string | null;
+  qbo_invoice_id: string | null;
   job_description: string;
   event_date: string | null;
   status: NsaQuoteStatus;
@@ -83,6 +85,8 @@ function toNsaQuote(row: NsaQuoteRow): NsaQuote {
     clientName: row.client_name,
     clientAddress: row.client_address,
     qboCustomerId: row.qbo_customer_id,
+    qboEstimateId: row.qbo_estimate_id,
+    qboInvoiceId: row.qbo_invoice_id,
     jobDescription: row.job_description,
     eventDate: row.event_date,
     status: row.status,
@@ -347,4 +351,49 @@ export async function createNsaQuoteFromJobSheet(
   });
   if (error) throw error;
   return toNsaQuote(data as NsaQuoteRow);
+}
+
+// Job Sheet -> NSA Invoice, direct (no quote step first) — same atomic
+// row-locked pattern as create_nsa_quote_from_job_sheet, for a job that goes
+// straight to invoice. See 202609160001_push_nsa_docs_to_qbo_on_creation.sql.
+export interface CreateNsaInvoiceFromJobSheetInput {
+  jobSheetId: string;
+  vendorNumber: string;
+  poNumber: string;
+  clientAddress: string;
+}
+
+export async function createNsaInvoiceFromJobSheet(
+  input: CreateNsaInvoiceFromJobSheetInput,
+): Promise<NsaQuote> {
+  const client = requireSupabase();
+  const { data, error } = await client.rpc("create_nsa_invoice_from_job_sheet", {
+    p_job_sheet_id: input.jobSheetId,
+    p_vendor_number: input.vendorNumber,
+    p_po_number: input.poNumber,
+    p_client_address: input.clientAddress,
+  });
+  if (error) throw error;
+  return toNsaQuote(data as NsaQuoteRow);
+}
+
+export interface PushNsaQuoteResult {
+  qboId: string;
+  qboDocNumber: string;
+}
+
+// Pushes an existing draft quote/invoice into the connected QuickBooks
+// Online company as a real Estimate/Invoice. QBO assigns its own DocNumber
+// (respecting the company's real numbering) — api/qbo/push-nsa-quote.ts
+// writes that back onto quote_number/nsa_invoice_number, so this is the
+// number actually in her books, not a guess.
+export async function pushNsaQuoteToQbo(quoteId: string): Promise<PushNsaQuoteResult> {
+  const res = await fetch("/api/qbo/push-nsa-quote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ quoteId }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error ?? "Push to QuickBooks failed.");
+  return { qboId: body.qboId, qboDocNumber: body.qboDocNumber };
 }
