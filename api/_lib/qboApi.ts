@@ -300,6 +300,41 @@ interface QboDocResult {
   docNumber: string;
 }
 
+/**
+ * This company has Custom Transaction Numbers on (real documents mix
+ * formats — plain "1426" for quotes, prefixed "NSA06392" for invoices),
+ * which is exactly the setting under which Intuit's own docs say QBO will
+ * NOT auto-assign a DocNumber if we don't supply one — confirmed live: a
+ * real push came back with DocNumber entirely absent. So the number has to
+ * come from us: read the most recently created document of the same type
+ * (ordering by Id, which increments with creation regardless of what
+ * DocNumber was typed) and increment its trailing digits, preserving
+ * whatever prefix and zero-padding it had.
+ *
+ * Race note: two pushes landing at nearly the same instant could compute the
+ * same next number. Low-volume single-operator use makes this acceptable for
+ * now — a collision surfaces as a clear QBO duplicate-number error to retry,
+ * not a silent one.
+ */
+function nextDocNumber(lastNumber: string | null | undefined): string | null {
+  if (!lastNumber) return null;
+  const match = lastNumber.match(/^(.*?)(\d+)$/);
+  if (!match) return null;
+  const [, prefix, digits] = match;
+  const next = (parseInt(digits, 10) + 1).toString().padStart(digits.length, "0");
+  return `${prefix}${next}`;
+}
+
+async function findNextDocNumber(
+  conn: QboConnection,
+  entity: "Estimate" | "Invoice",
+): Promise<string | null> {
+  const query = `select * from ${entity} orderby Id desc maxresults 1`;
+  const result = await qboFetch(conn, `/query?query=${encodeURIComponent(query)}`);
+  const last = result.QueryResponse?.[entity]?.[0]?.DocNumber as string | undefined;
+  return nextDocNumber(last);
+}
+
 export async function createEstimate(input: {
   customerName: string;
   /** The real QBO Customer.Id, when known (e.g. picked from the synced
@@ -312,10 +347,15 @@ export async function createEstimate(input: {
   const conn = await getActiveConnection();
   const customerId = input.customerId ?? (await findOrCreateCustomer(conn, input.customerName));
   const Line = await buildLines(conn, input.lines, input.itemName ?? "Job Sheet Line");
+  const docNumber = await findNextDocNumber(conn, "Estimate");
 
   const result = await qboFetch(conn, "/estimate", {
     method: "POST",
-    body: JSON.stringify({ CustomerRef: { value: customerId }, Line }),
+    body: JSON.stringify({
+      CustomerRef: { value: customerId },
+      Line,
+      ...(docNumber ? { DocNumber: docNumber } : {}),
+    }),
   });
   return { id: result.Estimate.Id, docNumber: result.Estimate.DocNumber };
 }
@@ -329,10 +369,15 @@ export async function createInvoice(input: {
   const conn = await getActiveConnection();
   const customerId = input.customerId ?? (await findOrCreateCustomer(conn, input.customerName));
   const Line = await buildLines(conn, input.lines, input.itemName ?? "Job Sheet Line");
+  const docNumber = await findNextDocNumber(conn, "Invoice");
 
   const result = await qboFetch(conn, "/invoice", {
     method: "POST",
-    body: JSON.stringify({ CustomerRef: { value: customerId }, Line }),
+    body: JSON.stringify({
+      CustomerRef: { value: customerId },
+      Line,
+      ...(docNumber ? { DocNumber: docNumber } : {}),
+    }),
   });
   return { id: result.Invoice.Id, docNumber: result.Invoice.DocNumber };
 }
