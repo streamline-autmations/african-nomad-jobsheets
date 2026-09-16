@@ -34,7 +34,10 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
       return fetch(url, init);
     }
     return res;
-  } catch (err) {
+  } catch {
+    // A network-level throw (DNS, socket reset, TLS) carries nothing the
+    // caller can act on that the retry's own outcome won't, so it is not
+    // rebound — if the retry also throws, that error propagates.
     await sleep(400);
     return fetch(url, init);
   }
@@ -109,6 +112,7 @@ async function getActiveConnection(): Promise<QboConnection> {
 // QBO's REST responses are heterogeneous per-entity payloads; callers know
 // the shape they asked for, so this deliberately returns `any` rather than
 // threading a generic through every query/create call site.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function qboFetch(conn: QboConnection, path: string, init?: RequestInit): Promise<any> {
   const res = await fetchWithRetry(`${QBO_API_BASE}/v3/company/${conn.realm_id}${path}`, {
     ...init,
@@ -183,6 +187,9 @@ export interface QboCustomerRecord {
   shipAddress: string;
 }
 
+// QBO omits address sub-fields inconsistently per entity, so this reads
+// whatever is present rather than asserting a shape Intuit does not guarantee.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function formatQboAddress(addr: any): string {
   if (!addr) return "";
   return [addr.Line1, addr.Line2, addr.City, addr.CountrySubDivisionCode, addr.PostalCode]
@@ -211,6 +218,7 @@ export async function listCustomers(): Promise<QboCustomerRecord[]> {
       `select * from Customer ` +
       `where Active = true startposition ${startPosition} maxresults ${pageSize}`;
     const result = await qboFetch(conn, `/query?query=${encodeURIComponent(query)}`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw QBO Customer payloads, narrowed field by field just below
     const page = (result.QueryResponse?.Customer ?? []) as any[];
 
     for (const c of page) {

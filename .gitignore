@@ -1,12 +1,45 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
-.playwright-mcp/
-.env.local
-.env.server.local
+bridge/dist/
+*.tsbuildinfo
+
+# Environment — only .env.example is ever committed
+.env
+.env.*
+!.env.example
+
+# Deployment / tooling caches
+.vercel
 .vercel/
 supabase/.temp/
+.playwright-mcp/
 
-.vercel
+# Local editor and AI-assistant settings
+.claude/
+.mcp.json
+.vscode/
+.idea/
+.DS_Store
 
-.vercel
-.claude/settings.local.json
+# Working notes and internal context. These contain client names, commercial
+# terms and margin structures, so they stay on the developer's machine rather
+# than in a public repository.
+AN_JOBSHEET_SYSTEM_CONTEXT.md
+HANDOFF.md
+CLAUDE_CODE_BUILD_PROMPT.md
+
+# Real client paperwork used as reference while building (quotes, invoices,
+# job-costing workbooks). Never commit customer documents.
+*.pdf
+*.xlsx
+*.xls
+*.csv
+/*.jpg
+/*.png
+/*.html
+!index.html
+!public/**
+!src/assets/**

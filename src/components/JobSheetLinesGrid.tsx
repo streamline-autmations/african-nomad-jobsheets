@@ -245,6 +245,12 @@ function DescriptionCell({
 }: DescriptionCellProps) {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(-1);
+  // Ties the input to its popup for assistive technology: aria-controls names
+  // the list, aria-activedescendant names the highlighted option inside it.
+  // Without both, a screen reader announces the input as a combobox but never
+  // reads what arrowing up and down is actually selecting.
+  const listboxId = useId();
+  const optionId = (index: number) => `${listboxId}-option-${index}`;
 
   const query = value.trim().toLowerCase();
   const filtered =
@@ -273,6 +279,8 @@ function DescriptionCell({
         type="text"
         role="combobox"
         aria-expanded={showDropdown}
+        aria-controls={listboxId}
+        aria-activedescendant={showDropdown && highlight >= 0 ? optionId(highlight) : undefined}
         aria-autocomplete="list"
         aria-label={ariaLabel}
         data-r={rowIndex}
@@ -311,10 +319,11 @@ function DescriptionCell({
         }}
       />
       {showDropdown && (
-        <ul className="sheet-suggestions" role="listbox">
+        <ul className="sheet-suggestions" role="listbox" id={listboxId}>
           {filtered.map((s, i) => (
             <li
               key={s.description}
+              id={optionId(i)}
               role="option"
               aria-selected={i === highlight}
               className={i === highlight ? "sheet-suggestion-active" : undefined}
@@ -862,7 +871,15 @@ export function JobSheetLinesGrid({
       </p>
 
       <div className="sheet-scroll">
-        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+        {/*
+          The keydown/paste handlers here are deliberate event delegation: the
+          focusable cells are the inputs inside, and arrow-key navigation and
+          multi-cell paste have to be resolved against the grid as a whole
+          rather than one cell. The container itself is never focused and
+          never a tab stop, so giving it an interactive role would announce a
+          control to assistive technology that does not exist.
+        */}
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
         <div className="sheet-grid" ref={gridRef} onKeyDown={handleKeyDown} onPaste={handlePaste}>
           <div className="sheet-row sheet-row-group">
             <span className="sheet-gutter" />

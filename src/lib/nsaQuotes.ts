@@ -1,5 +1,5 @@
 import { supabase, supabaseConfigured } from "./supabase";
-import { applyVat, calculateLinesSubtotal, round2 } from "./feeCalculations";
+import { applyVat, calculateLinesSubtotal } from "./feeCalculations";
 import type { LineItem } from "../types";
 import type { NsaQuote, NsaQuoteStatus } from "../nsaTypes";
 
