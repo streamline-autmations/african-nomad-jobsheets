@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   approveJobSheet,
   deleteJobSheetDraft,
+  fetchAllJobSheets,
   fetchCompanies,
-  fetchDraftJobSheets,
   mergeDraftJobSheets,
 } from "../lib/jobSheets";
 import { fetchLatestNsaQuoteForClient, fetchNsaQuoteById } from "../lib/nsaQuotes";
@@ -24,7 +24,12 @@ const EMPTY_QUOTE_FIELDS = {
 };
 
 export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
-  const [drafts, setDrafts] = useState<JobSheet[]>([]);
+  // Every job sheet regardless of status — this screen used to only fetch
+  // drafts, so a job sheet vanished with no way back to it the moment it was
+  // approved (there was nowhere left to click "Create Quote/Invoice" from).
+  // statusTab below filters what's actually shown.
+  const [jobSheets, setJobSheets] = useState<JobSheet[]>([]);
+  const [statusTab, setStatusTab] = useState<"all" | "draft" | "approved">("all");
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,9 +70,9 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
 
   function load() {
     setLoading(true);
-    Promise.all([fetchDraftJobSheets(), fetchCompanies()])
-      .then(([draftData, companyData]) => {
-        setDrafts(draftData);
+    Promise.all([fetchAllJobSheets(), fetchCompanies()])
+      .then(([sheetData, companyData]) => {
+        setJobSheets(sheetData);
         setCompanies(companyData);
         setLoadError(null);
       })
@@ -77,7 +82,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
 
   useEffect(load, []);
 
-  const selected = drafts.find((d) => d.id === selectedId) ?? null;
+  const selected = jobSheets.find((d) => d.id === selectedId) ?? null;
   const selectedCompanyName = companies.find((c) => c.id === selected?.companyId)?.name ?? "";
   // NSA holds the vendor-number relationship with the mines African Nomad
   // works for; Tuscany SA has its own separate silent-partner flow (see
@@ -257,7 +262,10 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
     });
   }
 
-  const mergeCandidates = drafts.filter((d) => mergeSelectedIds.has(d.id));
+  // Merging only ever makes sense for drafts (mergeDraftJobSheets itself
+  // rejects anything else) — restrict the candidate pool regardless of
+  // whatever statusTab the main list is currently showing.
+  const mergeCandidates = jobSheets.filter((d) => d.status === "draft" && mergeSelectedIds.has(d.id));
 
   async function handleCombine() {
     setMergeError(null);
@@ -285,14 +293,16 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
     }
   }
 
-  if (loading) return <p>Loading drafts…</p>;
+  if (loading) return <p>Loading job sheets…</p>;
   if (loadError) return <div className="banner banner-error">{loadError}</div>;
-  if (drafts.length === 0) return <p>No drafts waiting for approval.</p>;
+  if (jobSheets.length === 0) return <p>No job sheets yet.</p>;
 
+  const byStatus =
+    statusTab === "all" ? jobSheets : jobSheets.filter((d) => d.status === statusTab);
   const byCompany =
-    companyTab === "all" ? drafts : drafts.filter((d) => d.companyId === companyTab);
+    companyTab === "all" ? byStatus : byStatus.filter((d) => d.companyId === companyTab);
   const searchTerm = search.trim().toLowerCase();
-  const visibleDrafts = searchTerm
+  const visibleJobSheets = searchTerm
     ? byCompany.filter(
         (d) =>
           d.customerNameRaw.toLowerCase().includes(searchTerm) ||
@@ -303,6 +313,30 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   return (
     <div className="approval-view">
       <div className="approval-list">
+        <div className="company-tabs">
+          <button
+            type="button"
+            className={statusTab === "all" ? "active" : ""}
+            onClick={() => setStatusTab("all")}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className={statusTab === "draft" ? "active" : ""}
+            onClick={() => setStatusTab("draft")}
+          >
+            Draft
+          </button>
+          <button
+            type="button"
+            className={statusTab === "approved" ? "active" : ""}
+            onClick={() => setStatusTab("approved")}
+          >
+            Approved
+          </button>
+        </div>
+
         <div className="company-tabs">
           <button
             type="button"
@@ -331,15 +365,19 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
           onChange={(e) => setSearch(e.target.value)}
         />
 
-        {visibleDrafts.length === 0 && <p>No job sheets match this filter.</p>}
+        {visibleJobSheets.length === 0 && <p>No job sheets match this filter.</p>}
 
-        {visibleDrafts.map((sheet) =>
+        {visibleJobSheets.map((sheet) =>
           mergeMode ? (
-            <label key={sheet.id} className="approval-list-item merge-selectable">
+            <label
+              key={sheet.id}
+              className={`approval-list-item merge-selectable ${sheet.status !== "draft" ? "merge-disabled" : ""}`}
+            >
               <span className="checkbox-inline">
                 <input
                   type="checkbox"
                   checked={mergeSelectedIds.has(sheet.id)}
+                  disabled={sheet.status !== "draft"}
                   onChange={() => toggleMergeSelected(sheet.id)}
                 />
                 Select
@@ -358,6 +396,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
               <strong>{sheet.customerNameRaw || "Unnamed customer"}</strong>
               <span>{sheet.jobDescription || "No description"}</span>
               <span>Profit margin {sheet.netMarginPct.toFixed(1)}%</span>
+              <span className="nsa-status-badge">{sheet.status}</span>
             </button>
           ),
         )}
@@ -422,13 +461,6 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
             <span>Net profit</span>
             <strong>R {selected.netProfit.toFixed(2)}</strong>
           </div>
-
-          {!selected.customerId && (
-            <p className="field-hint">
-              This job sheet references a new customer ("{selected.customerNameRaw}
-              ") — approving it will also queue a create_customer request.
-            </p>
-          )}
 
           {approveError && <div className="banner banner-error">{approveError}</div>}
           {deleteError && <div className="banner banner-error">{deleteError}</div>}
@@ -553,22 +585,28 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
             >
               Edit (add expenses, change lines…)
             </button>
-            <button
-              type="button"
-              className="btn-danger"
-              disabled={approving || deleting}
-              onClick={() => handleDelete(selected)}
-            >
-              {deleting ? "Deleting…" : "Delete draft"}
-            </button>
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={approving}
-              onClick={() => handleApprove(selected)}
-            >
-              {approving ? "Approving…" : "Approve"}
-            </button>
+            {selected.status === "draft" && (
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={approving || deleting}
+                onClick={() => handleDelete(selected)}
+              >
+                {deleting ? "Deleting…" : "Delete draft"}
+              </button>
+            )}
+            {selected.status === "draft" ? (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={approving}
+                onClick={() => handleApprove(selected)}
+              >
+                {approving ? "Approving…" : "Approve"}
+              </button>
+            ) : (
+              <span className="nsa-status-badge">Status: {selected.status}</span>
+            )}
           </div>
         </div>
       )}

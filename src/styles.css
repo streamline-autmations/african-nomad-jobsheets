@@ -1065,6 +1065,41 @@ button.sheet-gutter {
   box-shadow: 0 0 0 3px rgba(138, 90, 43, 0.14);
 }
 
+/* Deliberately understated — occasional-use tool, not a primary action. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.link-button:hover {
+  color: var(--text);
+}
+
+.merge-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.approval-list-item.merge-selectable {
+  cursor: default;
+}
+
+.approval-list-item.merge-selectable.merge-disabled {
+  opacity: 0.5;
+}
+
 .sync-history-list {
   list-style: none;
   padding: 0;
