@@ -245,8 +245,43 @@ export interface QboLine {
   unitPrice: number;
 }
 
+/**
+ * Companies outside the US (this one is South African) don't use QBO's
+ * "Automated Sales Tax" special codes ("TAX"/"NON") — they have their own
+ * TaxCode records (e.g. a 15% VAT "Standard Rate" code), and a transaction
+ * with Sales Tax enabled on the company will be rejected ("Make sure all
+ * your transactions have a sales tax rate before you save") if no line
+ * carries one. There's no field marking "the" default taxable code, so this
+ * prefers one named like a standard rate over an exempt/zero-rated one.
+ * Line Amounts we send are already VAT-exclusive (feeCalculations.ts adds
+ * VAT as a separate cascade step, never per-line), which matches QBO's
+ * default TaxExcluded calculation — so this doesn't double up on VAT, it
+ * lets QBO's own copy of the transaction correctly show tax at all.
+ */
+let cachedTaxCodeId: string | null | undefined;
+
+async function findDefaultTaxCodeId(conn: QboConnection): Promise<string | null> {
+  if (cachedTaxCodeId !== undefined) return cachedTaxCodeId;
+
+  const result = await qboFetch(
+    conn,
+    `/query?query=${encodeURIComponent("select * from TaxCode where Active = true")}`,
+  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw QBO TaxCode payloads
+  const codes = (result.QueryResponse?.TaxCode ?? []) as any[];
+  if (codes.length === 0) {
+    cachedTaxCodeId = null;
+    return null;
+  }
+
+  const standard = codes.find((c) => /standard/i.test(c.Name ?? ""));
+  cachedTaxCodeId = (standard ?? codes[0]).Id as string;
+  return cachedTaxCodeId;
+}
+
 async function buildLines(conn: QboConnection, lines: QboLine[], itemName: string) {
   const itemId = await findOrCreateServiceItem(conn, itemName);
+  const taxCodeId = await findDefaultTaxCodeId(conn);
   return lines.map((line) => ({
     DetailType: "SalesItemLineDetail",
     Amount: Math.round(line.qty * line.unitPrice * 100) / 100,
@@ -255,6 +290,7 @@ async function buildLines(conn: QboConnection, lines: QboLine[], itemName: strin
       ItemRef: { value: itemId },
       Qty: line.qty,
       UnitPrice: line.unitPrice,
+      ...(taxCodeId ? { TaxCodeRef: { value: taxCodeId } } : {}),
     },
   }));
 }
