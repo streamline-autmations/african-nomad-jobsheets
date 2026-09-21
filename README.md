@@ -244,17 +244,22 @@ mirror able only to grow.
 
 ## Screenshots
 
-*To be added.* Suggested captures, all from seeded or anonymised data — never a
-real client's job:
+### Job sheet grid
 
-| File | What to capture |
-|---|---|
-| `docs/screenshots/job-sheet-grid.png` | The two-block spreadsheet grid with live margin |
-| `docs/screenshots/approvals.png` | The approval queue with sync status |
-| `docs/screenshots/quote-document.png` | A rendered client quote, placeholder letterhead |
-| `docs/screenshots/mobile.png` | The installed PWA at phone width |
+![Job sheet grid](docs/screenshots/job-sheet-grid.png)
 
-Place them in `docs/screenshots/` and reference them here.
+### Quote document
+
+![Quote document](docs/screenshots/quote-document.png)
+
+### Mobile
+
+![Mobile](docs/screenshots/mobile.png)
+
+All data shown is placeholder ("Sample Client Pty Ltd", fake line items) typed in
+locally and never saved — this app reads live production data with no login wall, so
+the real approvals/quotes lists aren't screenshotted to avoid exposing real client
+names and figures.
 
 ---
 
