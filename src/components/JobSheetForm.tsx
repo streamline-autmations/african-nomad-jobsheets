@@ -46,6 +46,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
   const [qboCustomersError, setQboCustomersError] = useState<string | null>(null);
   const [syncingQboCustomers, setSyncingQboCustomers] = useState(true);
   const [selectedQboCustomerId, setSelectedQboCustomerId] = useState<string | null>(null);
+  const [staleCustomerNotice, setStaleCustomerNotice] = useState<string | null>(null);
 
   const [jobDescription, setJobDescription] = useState("");
   const [eventDate, setEventDate] = useState("");
@@ -129,6 +130,34 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
     };
   }, [editJobSheetId]);
 
+  // A draft reopened after QuickBooks renamed, merged or deleted its customer
+  // still carries the old name and Id. The name drives the Sibanye 2.5%, and
+  // a dead Id makes the QBO push fail, so bring both in line with the fresh
+  // sync. Only acts on a sync that actually succeeded — on a failed sync the
+  // mirror may just be stale, not the job sheet.
+  useEffect(() => {
+    if (syncingQboCustomers || loadingExisting || qboCustomersError) return;
+    if (isNewCustomer || !selectedQboCustomerId || qboCustomers.length === 0) return;
+    const customer = qboCustomers.find((c) => c.qboCustomerId === selectedQboCustomerId);
+    if (!customer) {
+      setStaleCustomerNotice(
+        `"${customerNameRaw}" is no longer in QuickBooks — pick the customer again before saving.`,
+      );
+      setSelectedQboCustomerId(null);
+      return;
+    }
+    const label = nsaQboCustomerLabel(customer, qboCustomers);
+    if (label !== customerNameRaw) setCustomerNameRaw(label);
+  }, [
+    syncingQboCustomers,
+    loadingExisting,
+    qboCustomersError,
+    isNewCustomer,
+    selectedQboCustomerId,
+    qboCustomers,
+    customerNameRaw,
+  ]);
+
   const selectedCompany = companies.find((c) => c.id === companyId);
 
   const { clientLines, expenseLines } = useMemo(() => sheetRowsToLines(rows), [rows]);
@@ -184,6 +213,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
     setCustomerNameRaw("");
     setIsNewCustomer(false);
     setSelectedQboCustomerId(null);
+    setStaleCustomerNotice(null);
     setJobDescription("");
     setEventDate("");
     setRows(linesToSheetRows([], []));
@@ -271,6 +301,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
               onChange={(e) => {
                 const customer = qboCustomers.find((c) => c.qboCustomerId === e.target.value);
                 if (!customer) return;
+                setStaleCustomerNotice(null);
                 setSelectedQboCustomerId(customer.qboCustomerId);
                 setCustomerNameRaw(nsaQboCustomerLabel(customer, qboCustomers));
               }}
@@ -318,6 +349,9 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
               Vendor number and address on a later NSA quote/invoice auto-fill from whichever
               customer is picked here.
             </p>
+          )}
+          {staleCustomerNotice && !isNewCustomer && (
+            <div className="banner banner-error">{staleCustomerNotice}</div>
           )}
           {qboCustomersError && <div className="banner banner-error">{qboCustomersError}</div>}
         </div>

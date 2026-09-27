@@ -291,8 +291,15 @@ export async function mergeDraftJobSheets(
   if (rest.some((s) => s.companyId !== first.companyId)) {
     throw new Error("Can't combine job sheets from different companies.");
   }
+  // A QBO-picked customer is identified by its QBO Id, not its name — the
+  // name follows QuickBooks renames, so two drafts for the same customer can
+  // carry different spellings until both are re-saved.
   const sameCustomer = (s: JobSheet) =>
-    first.customerId ? s.customerId === first.customerId : s.customerNameRaw === first.customerNameRaw;
+    first.qboCustomerId
+      ? s.qboCustomerId === first.qboCustomerId
+      : first.customerId
+        ? s.customerId === first.customerId
+        : s.customerNameRaw === first.customerNameRaw;
   if (rest.some((s) => !sameCustomer(s))) {
     throw new Error("Can't combine job sheets for different customers.");
   }

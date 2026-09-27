@@ -29,7 +29,9 @@ export const NSA_FEE_RATE = 0.1;
  */
 export const SIBANYE_REBATE_RATE = 0.025;
 export const TUSCANY_FEE_RATE = 0.1;
-export const SIBANYE_CUSTOMER_NAME = "Sibanye Stillwater";
+// Matched anywhere in the customer name, case-insensitively — see
+// isSibanyeCustomer.
+export const SIBANYE_NAME_MATCH = "sibanye";
 
 // Avoids classic binary floating-point rounding (e.g. 1.005 -> 1.00) for the
 // two-decimal money values this app persists and displays.
@@ -73,11 +75,14 @@ export function calculateLinesSubtotal(lines: LineItem[]): number {
   return round2(lines.reduce((sum, line) => sum + line.lineTotal, 0));
 }
 
-// Matches "Sibanye Stillwater" itself and any mine/site customer under them
-// (e.g. "Sibanye Stillwater East 3") so the rebate applies fleet-wide,
-// per Christiaan's 2026-07-20 decision.
-function isSibanyeStillwater(customerName: string): boolean {
-  return customerName.trim().toLowerCase().startsWith(SIBANYE_CUSTOMER_NAME.toLowerCase());
+// Any customer with "sibanye" anywhere in its name carries the rebate
+// (Christiaan, 2026-09-27). The customer now comes from NSA's QuickBooks
+// Online list, where Sibanye's mines are spelled every which way —
+// "Sibanyestillwater Kroondal", "Sibanye Gold Limited Driefontein Div.",
+// "Sibanye Rustenburg Platinum Mines (Pty) Ltd" — so the old
+// startsWith("Sibanye Stillwater") rule silently missed most of them.
+function isSibanyeCustomer(customerName: string): boolean {
+  return customerName.toLowerCase().includes(SIBANYE_NAME_MATCH);
 }
 
 /**
@@ -90,7 +95,7 @@ export function sibanyeRebateRateFor(
   companyName: CompanyName | string,
   customerName: string,
 ): number {
-  return companyName === "African Nomad" && isSibanyeStillwater(customerName)
+  return companyName === "African Nomad" && isSibanyeCustomer(customerName)
     ? SIBANYE_REBATE_RATE
     : 0;
 }

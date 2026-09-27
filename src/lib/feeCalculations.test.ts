@@ -69,10 +69,26 @@ describe("sibanyeRebateRateFor", () => {
     expect(sibanyeRebateRateFor("African Nomad", "Sibanye Stillwater East 3")).toBe(0.025);
   });
 
+  // Real display names from NSA's QuickBooks Online customer list.
+  it("matches every spelling of Sibanye that QuickBooks uses", () => {
+    for (const name of [
+      "Sibanyestillwater Kroondal",
+      "Sibanye Gold Limited Driefontein Div.",
+      "Sibanye Gold (Pty) Ltd– Kloof Div.",
+      "Sibanye Limited Kloof Division",
+      "Sibanye Rustenburg Platinum Mine (PTY) LTD",
+      "Sibanye Rustenburg Mine Pty Ltd - Saffy Shaft",
+      "Sibanye Stillwater Rustenburg - SA Operations Hexriver Complex",
+    ]) {
+      expect(sibanyeRebateRateFor("African Nomad", name)).toBe(0.025);
+    }
+  });
+
   it("is zero for any other company or customer combination", () => {
     expect(sibanyeRebateRateFor("Tuscany SA", "Sibanye Stillwater")).toBe(0);
+    expect(sibanyeRebateRateFor("Tuscany SA", "Sibanyestillwater Kroondal")).toBe(0);
     expect(sibanyeRebateRateFor("African Nomad", "Some Other Mine")).toBe(0);
-    expect(sibanyeRebateRateFor("African Nomad", "Sibanye Platinum")).toBe(0);
+    expect(sibanyeRebateRateFor("African Nomad", "Harmony Gold Mining Company Ltd")).toBe(0);
   });
 });
 
@@ -327,10 +343,21 @@ describe("calculateJobSheetFinancials — African Nomad", () => {
     expect(result.sibanyeRebate).toBe(287.5); // 11500 * 2.5%
   });
 
-  it("does not apply the Sibanye rebate to a customer with a similar but different name", () => {
+  it("applies the Sibanye rebate when Sibanye isn't the first word of the name", () => {
     const result = calculateJobSheetFinancials({
       companyName: "African Nomad",
-      customerName: "Sibanye Platinum",
+      customerName: "NSA - Sibanye Kloof",
+      clientLines: [line("Catering", 1, 10000)],
+      expenseLines: [],
+    });
+
+    expect(result.sibanyeRebate).toBe(287.5);
+  });
+
+  it("does not apply the Sibanye rebate to a non-Sibanye customer", () => {
+    const result = calculateJobSheetFinancials({
+      companyName: "African Nomad",
+      customerName: "Western Platinum (Pty) Ltd",
       clientLines: [line("Catering", 1, 10000)],
       expenseLines: [],
     });
