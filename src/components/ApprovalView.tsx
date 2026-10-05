@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   approveJobSheet,
+  copyJobSheet,
   deleteJobSheetDraft,
   fetchAllJobSheets,
   fetchCompanies,
@@ -15,6 +16,8 @@ import { errorMessage } from "../lib/errors";
 
 interface ApprovalViewProps {
   onEditJobSheet: (id: string) => void;
+  /** Called with the new draft's id after "Copy job sheet" has saved it. */
+  onJobSheetCopied: (id: string) => void;
 }
 
 const EMPTY_QUOTE_FIELDS = {
@@ -23,7 +26,7 @@ const EMPTY_QUOTE_FIELDS = {
   clientAddress: "",
 };
 
-export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
+export function ApprovalView({ onEditJobSheet, onJobSheetCopied }: ApprovalViewProps) {
   // Every job sheet regardless of status — this screen used to only fetch
   // drafts, so a job sheet vanished with no way back to it the moment it was
   // approved (there was nowhere left to click "Create Quote/Invoice" from).
@@ -38,6 +41,8 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
   const [approveError, setApproveError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [companyTab, setCompanyTab] = useState<string>("all");
   const [search, setSearch] = useState("");
 
@@ -242,6 +247,29 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
       setDeleteError(errorMessage(err));
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function handleCopy(jobSheet: JobSheet) {
+    setCopyError(null);
+    setCopying(true);
+    try {
+      const copy = await copyJobSheet({
+        companyId: jobSheet.companyId,
+        companyName: selectedCompanyName,
+        customerId: jobSheet.customerId,
+        customerNameRaw: jobSheet.customerNameRaw,
+        qboCustomerId: jobSheet.qboCustomerId,
+        jobDescription: jobSheet.jobDescription,
+        eventDate: jobSheet.eventDate,
+        clientLines: jobSheet.clientLines,
+        expenseLines: jobSheet.expenseLines,
+      });
+      onJobSheetCopied(copy.id);
+    } catch (err) {
+      setCopyError(errorMessage(err));
+    } finally {
+      setCopying(false);
     }
   }
 
@@ -464,6 +492,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
 
           {approveError && <div className="banner banner-error">{approveError}</div>}
           {deleteError && <div className="banner banner-error">{deleteError}</div>}
+          {copyError && <div className="banner banner-error">{copyError}</div>}
           {quoteError && <div className="banner banner-error">{quoteError}</div>}
           {quoteMessage && <div className="banner banner-success">{quoteMessage}</div>}
 
@@ -576,7 +605,7 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
             </div>
           )}
 
-          <div className="line-items-header">
+          <div className="line-items-header approval-actions">
             <button
               type="button"
               className="btn-secondary"
@@ -584,6 +613,14 @@ export function ApprovalView({ onEditJobSheet }: ApprovalViewProps) {
               onClick={() => onEditJobSheet(selected.id)}
             >
               Edit (add expenses, change lines…)
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={approving || deleting || copying}
+              onClick={() => handleCopy(selected)}
+            >
+              {copying ? "Copying…" : "Copy job sheet"}
             </button>
             {selected.status === "draft" && (
               <button

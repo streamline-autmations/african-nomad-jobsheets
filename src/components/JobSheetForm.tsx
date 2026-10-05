@@ -5,7 +5,13 @@ import { JobSheetInternalDocument } from "./JobSheetInternalDocument";
 import { JobSheetDocument } from "./JobSheetDocument";
 import { calculateJobSheetFinancials, withLineTotal } from "../lib/feeCalculations";
 import { linesToSheetRows, sheetRowsToLines, type SheetRow } from "../lib/jobSheetRows";
-import { fetchCommonExpenses, fetchCompanies, fetchJobSheetById, saveJobSheetDraft } from "../lib/jobSheets";
+import {
+  copyJobSheet,
+  fetchCommonExpenses,
+  fetchCompanies,
+  fetchJobSheetById,
+  saveJobSheetDraft,
+} from "../lib/jobSheets";
 import {
   nsaQboCustomerLabel,
   syncAndFetchNsaQboCustomers,
@@ -21,9 +27,14 @@ interface JobSheetFormProps {
   /** Called after a successful save while editing — lets the caller navigate
    * back (e.g. to Approvals) instead of leaving a stale editing session open. */
   onEditSaved?: () => void;
+  /** Shown as a banner above the form, e.g. after opening a fresh copy. */
+  notice?: string | null;
+  /** Called with the new draft's id once "Copy job sheet" has saved it, so
+   * the caller can switch the editor over to the copy. */
+  onCopied?: (id: string) => void;
 }
 
-export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps) {
+export function JobSheetForm({ editJobSheetId, onEditSaved, notice, onCopied }: JobSheetFormProps) {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [commonExpenses, setCommonExpenses] = useState<CommonExpense[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -57,6 +68,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
   const [rows, setRows] = useState<SheetRow[]>(() => linesToSheetRows([], []));
 
   const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
@@ -219,37 +231,43 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
     setRows(linesToSheetRows([], []));
   }
 
+  function validationError(): string | null {
+    if (!companyId) return "Select a company before saving.";
+    if (!isNewCustomer && !selectedQboCustomerId) {
+      return "Select a customer, or tick \"this customer isn't in QuickBooks yet\".";
+    }
+    if (isNewCustomer && !customerNameRaw.trim()) return "Type the new customer's name.";
+    return null;
+  }
+
+  // What's on screen, ready for saveJobSheetDraft / copyJobSheet.
+  function formInput() {
+    return {
+      companyId,
+      companyName: selectedCompany?.name ?? "",
+      customerId: null,
+      customerNameRaw,
+      qboCustomerId: isNewCustomer ? null : selectedQboCustomerId,
+      jobDescription,
+      eventDate: eventDate || null,
+      clientLines: clientLines.map(withLineTotal),
+      expenseLines: expenseLines.map(withLineTotal),
+    };
+  }
+
   async function handleSave() {
     setSaveError(null);
     setSaveMessage(null);
 
-    if (!companyId) {
-      setSaveError("Select a company before saving.");
-      return;
-    }
-    if (!isNewCustomer && !selectedQboCustomerId) {
-      setSaveError("Select a customer, or tick \"this customer isn't in QuickBooks yet\".");
-      return;
-    }
-    if (isNewCustomer && !customerNameRaw.trim()) {
-      setSaveError("Type the new customer's name.");
+    const invalid = validationError();
+    if (invalid) {
+      setSaveError(invalid);
       return;
     }
 
     setSaving(true);
     try {
-      await saveJobSheetDraft({
-        id: editingId,
-        companyId,
-        companyName: selectedCompany?.name ?? "",
-        customerId: null,
-        customerNameRaw,
-        qboCustomerId: isNewCustomer ? null : selectedQboCustomerId,
-        jobDescription,
-        eventDate: eventDate || null,
-        clientLines: clientLines.map(withLineTotal),
-        expenseLines: expenseLines.map(withLineTotal),
-      });
+      await saveJobSheetDraft({ id: editingId, ...formInput() });
       if (editingId) {
         setSaveMessage("Draft updated.");
         onEditSaved?.();
@@ -261,6 +279,29 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
       setSaveError(errorMessage(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Copies what's on screen — including edits not saved yet, which then live
+  // in the copy only; the original keeps whatever it was last saved with.
+  async function handleCopy() {
+    setSaveError(null);
+    setSaveMessage(null);
+
+    const invalid = validationError();
+    if (invalid) {
+      setSaveError(invalid);
+      return;
+    }
+
+    setCopying(true);
+    try {
+      const copy = await copyJobSheet(formInput());
+      onCopied?.(copy.id);
+    } catch (err) {
+      setSaveError(errorMessage(err));
+    } finally {
+      setCopying(false);
     }
   }
 
@@ -278,6 +319,7 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
 
   return (
     <div className="job-sheet-form">
+      {notice && <div className="banner banner-success">{notice}</div>}
       {editingId && (
         <div className="banner">Editing an existing draft — changes replace what&apos;s there.</div>
       )}
@@ -449,10 +491,20 @@ export function JobSheetForm({ editJobSheetId, onEditSaved }: JobSheetFormProps)
         >
           View / print quote
         </button>
+        {editingId && (
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={saving || copying}
+            onClick={handleCopy}
+          >
+            {copying ? "Copying…" : "Copy job sheet"}
+          </button>
+        )}
         <button
           type="button"
           className="btn-primary"
-          disabled={saving}
+          disabled={saving || copying}
           onClick={handleSave}
         >
           {saving ? "Saving…" : editingId ? "Save changes" : "Save draft"}

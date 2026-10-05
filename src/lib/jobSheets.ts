@@ -333,6 +333,49 @@ export async function mergeDraftJobSheets(
   return saved;
 }
 
+// Saves a copy of a job sheet as a brand-new draft: same company, customer,
+// job details and lines. Status, QuickBooks txn ids, the NSA quote link and
+// attached files are never carried over — they belong to the original job —
+// so the copy goes through approval and any QuickBooks push on its own.
+//
+// Lines get fresh ids (an expense line's id is its identity in the QBD Bill
+// queue), and each photo is copied to its own storage object rather than
+// shared: removing a photo deletes the object straight away (RowPhotoStrip),
+// so a shared path would vanish from the original as well.
+export async function copyJobSheet(
+  input: Omit<SaveJobSheetDraftInput, "id">,
+): Promise<JobSheet> {
+  const copiedPhotoPaths: string[] = [];
+  try {
+    const rows: SheetRow[] = [];
+    for (const row of linesToSheetRows(input.clientLines, input.expenseLines)) {
+      const photoPaths: string[] = [];
+      for (const path of row.photoPaths) {
+        const copied = await copyLineItemPhoto(row.id, path);
+        copiedPhotoPaths.push(copied);
+        photoPaths.push(copied);
+      }
+      rows.push({ ...row, clientLineId: undefined, supplierLineId: undefined, photoPaths });
+    }
+
+    const { clientLines, expenseLines } = sheetRowsToLines(rows);
+    return await saveJobSheetDraft({
+      ...input,
+      clientLines: clientLines.map(withLineTotal),
+      expenseLines: expenseLines.map(withLineTotal),
+    });
+  } catch (err) {
+    // Best effort — a failed copy shouldn't leave stray photo objects behind.
+    if (copiedPhotoPaths.length > 0) {
+      await requireSupabase()
+        .storage.from(JOB_SHEET_FILES_BUCKET)
+        .remove(copiedPhotoPaths)
+        .catch(() => undefined);
+    }
+    throw err;
+  }
+}
+
 // The only path that ever writes to qbd_sync_queue: calls the
 // approve_job_sheet() Postgres function, which atomically flips the job
 // sheet to 'approved' and queues the create_customer (if needed) and
@@ -564,6 +607,20 @@ export async function deleteLineItemPhoto(storagePath: string): Promise<void> {
   const client = requireSupabase();
   const { error } = await client.storage.from(JOB_SHEET_FILES_BUCKET).remove([storagePath]);
   if (error) throw error;
+}
+
+// Same layout as uploadLineItemPhoto. The source's own random prefix is
+// dropped from the file name so copies of copies don't stack them up.
+async function copyLineItemPhoto(rowId: string, storagePath: string): Promise<string> {
+  const client = requireSupabase();
+  const fileName = (storagePath.split("/").pop() ?? "photo").replace(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i,
+    "",
+  );
+  const newPath = `${LINE_PHOTO_PREFIX}/${rowId}/${crypto.randomUUID()}-${fileName}`;
+  const { error } = await client.storage.from(JOB_SHEET_FILES_BUCKET).copy(storagePath, newPath);
+  if (error) throw error;
+  return newPath;
 }
 
 export async function deleteJobSheetFile(id: string, storagePath: string): Promise<void> {

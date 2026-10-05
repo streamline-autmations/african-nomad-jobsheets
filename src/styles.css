@@ -1130,6 +1130,19 @@ button.sheet-gutter {
   gap: 0.75rem;
 }
 
+/* Edit / Copy / Delete / Approve — wraps rather than pushing Approve off the
+   panel, and keeps Approve (always last) on the right of whichever line it
+   lands on. */
+.approval-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.75rem;
+}
+
+.approval-actions > :last-child {
+  margin-left: auto;
+}
+
 .nsa-dockind-toggle {
   display: flex;
   gap: 1.5rem;

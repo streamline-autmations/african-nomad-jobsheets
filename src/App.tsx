@@ -7,6 +7,9 @@ import { supabaseConfigured } from "./lib/supabase";
 
 type Tab = "new" | "approvals" | "nsa-new" | "nsa-quotes";
 
+const COPY_NOTICE =
+  "Copied as a new draft — you're now editing the copy. The original is unchanged.";
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("new");
   // Bumped after saving a new NSA quote so NsaQuoteList refetches when the
@@ -15,6 +18,15 @@ export default function App() {
   // Set by Approvals' "Edit" button, read by JobSheetForm to load that draft
   // instead of starting blank — cleared once the edit is saved.
   const [editJobSheetId, setEditJobSheetId] = useState<string | null>(null);
+  // Shown above the form when it opens — e.g. to say it's now on a copy,
+  // which otherwise looks identical to the original.
+  const [editNotice, setEditNotice] = useState<string | null>(null);
+
+  function openInEditor(id: string, notice: string | null = null) {
+    setEditJobSheetId(id);
+    setEditNotice(notice);
+    setTab("new");
+  }
 
   return (
     <div className={`app-shell${tab === "new" ? " app-shell-wide" : ""}`}>
@@ -26,6 +38,7 @@ export default function App() {
             className={tab === "new" ? "active" : ""}
             onClick={() => {
               setEditJobSheetId(null);
+              setEditNotice(null);
               setTab("new");
             }}
           >
@@ -65,18 +78,19 @@ export default function App() {
         {tab === "new" && (
           <JobSheetForm
             editJobSheetId={editJobSheetId}
+            notice={editNotice}
             onEditSaved={() => {
               setEditJobSheetId(null);
+              setEditNotice(null);
               setTab("approvals");
             }}
+            onCopied={(id) => openInEditor(id, COPY_NOTICE)}
           />
         )}
         {tab === "approvals" && (
           <ApprovalView
-            onEditJobSheet={(id) => {
-              setEditJobSheetId(id);
-              setTab("new");
-            }}
+            onEditJobSheet={(id) => openInEditor(id)}
+            onJobSheetCopied={(id) => openInEditor(id, COPY_NOTICE)}
           />
         )}
         {tab === "nsa-new" && (
