@@ -1,4 +1,5 @@
 import { INTUIT_TOKEN_URL, intuitBasicAuthHeader, supabaseAdmin } from "./qbo.js";
+import { pickVatTaxCodeId } from "./vatTaxCode.js";
 
 // Sandbox vs production only changes which QBO API host we call — same
 // OAuth flow, same code path either way. Defaults to sandbox since that's
@@ -245,61 +246,43 @@ export interface QboLine {
   unitPrice: number;
 }
 
-/**
- * Companies outside the US (this one is South African) don't use QBO's
- * "Automated Sales Tax" special codes ("TAX"/"NON") — they have their own
- * TaxCode records, and a transaction with Sales Tax enabled on the company
- * will be rejected ("Make sure all your transactions have a sales tax rate
- * before you save") if no line carries one. There's no field marking "the"
- * default taxable code, and matching by name alone is unreliable — this
- * company's "Standard Rate" code turned out to still carry South Africa's
- * pre-2018 14% rate rather than the current 15% VAT, so this instead
- * resolves each TaxCode's actual TaxRate percentage and picks the one that's
- * really 15%, falling back to name-matching only if no code has that exact
- * rate. Line Amounts we send are already VAT-exclusive (feeCalculations.ts
- * adds VAT as a separate cascade step, never per-line), which matches QBO's
- * default TaxExcluded calculation — so this doesn't double up on VAT, it
- * lets QBO's own copy of the transaction correctly show tax at all.
- */
-const SA_VAT_RATE = 15;
-let cachedTaxCodeId: string | null | undefined;
-
-async function findDefaultTaxCodeId(conn: QboConnection): Promise<string | null> {
-  if (cachedTaxCodeId !== undefined) return cachedTaxCodeId;
-
+// Every line needs a TaxCodeRef or QBO rejects the transaction — see
+// vatTaxCode.ts for how the 15% VAT code is chosen. Line Amounts we send are
+// already VAT-exclusive (feeCalculations.ts adds VAT as a separate cascade
+// step, never per-line), which matches QBO's default TaxExcluded calculation —
+// so this doesn't double up on VAT, it lets QBO's own copy of the transaction
+// correctly show tax at all.
+//
+// Looked up fresh on every push rather than cached: a cached ID could outlive
+// a rate edit in QBO or a reconnect to a different company, and two read-only
+// queries per push is nothing at this volume.
+async function findVatTaxCodeId(conn: QboConnection): Promise<string> {
   const codesResult = await qboFetch(
     conn,
-    `/query?query=${encodeURIComponent("select * from TaxCode where Active = true")}`,
+    `/query?query=${encodeURIComponent("select * from TaxCode where Active = true maxresults 1000")}`,
   );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw QBO TaxCode payloads
   const codes = (codesResult.QueryResponse?.TaxCode ?? []) as any[];
-  if (codes.length === 0) {
-    cachedTaxCodeId = null;
-    return null;
-  }
 
   const ratesResult = await qboFetch(
     conn,
-    `/query?query=${encodeURIComponent("select * from TaxRate where Active = true")}`,
+    `/query?query=${encodeURIComponent("select * from TaxRate where Active = true maxresults 1000")}`,
   );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw QBO TaxRate payloads
   const rates = (ratesResult.QueryResponse?.TaxRate ?? []) as any[];
-  const rateValueById = new Map(rates.map((r) => [r.Id as string, Number(r.RateValue)]));
 
-  const byActualRate = codes.find((c) => {
-    const taxRateId = c.SalesTaxRateList?.TaxRateDetail?.[0]?.TaxRateRef?.value as string | undefined;
-    const rateValue = taxRateId ? rateValueById.get(taxRateId) : undefined;
-    return rateValue === SA_VAT_RATE;
-  });
-
-  const standard = codes.find((c) => /standard/i.test(c.Name ?? ""));
-  cachedTaxCodeId = (byActualRate ?? standard ?? codes[0]).Id as string;
-  return cachedTaxCodeId;
+  // "en-CA" formats as YYYY-MM-DD; the company's "today" is South African.
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" });
+  // Throws if no code charges 15% (including when there are no codes at all) —
+  // never falls back, never sends a line without tax.
+  return pickVatTaxCodeId(codes, rates, today);
 }
 
 async function buildLines(conn: QboConnection, lines: QboLine[], itemName: string) {
+  // Tax code first: if there's no 15% code it throws before anything is
+  // created in QBO.
+  const taxCodeId = await findVatTaxCodeId(conn);
   const itemId = await findOrCreateServiceItem(conn, itemName);
-  const taxCodeId = await findDefaultTaxCodeId(conn);
   return lines.map((line) => ({
     DetailType: "SalesItemLineDetail",
     Amount: Math.round(line.qty * line.unitPrice * 100) / 100,
@@ -308,7 +291,7 @@ async function buildLines(conn: QboConnection, lines: QboLine[], itemName: strin
       ItemRef: { value: itemId },
       Qty: line.qty,
       UnitPrice: line.unitPrice,
-      ...(taxCodeId ? { TaxCodeRef: { value: taxCodeId } } : {}),
+      TaxCodeRef: { value: taxCodeId },
     },
   }));
 }
@@ -370,8 +353,8 @@ export async function createEstimate(input: {
   itemName?: string;
 }): Promise<QboDocResult> {
   const conn = await getActiveConnection();
-  const customerId = input.customerId ?? (await findOrCreateCustomer(conn, input.customerName));
   const Line = await buildLines(conn, input.lines, input.itemName ?? "Job Sheet Line");
+  const customerId = input.customerId ?? (await findOrCreateCustomer(conn, input.customerName));
   const docNumber = await findNextDocNumber(conn, "Estimate");
 
   const result = await qboFetch(conn, "/estimate", {
@@ -392,8 +375,8 @@ export async function createInvoice(input: {
   itemName?: string;
 }): Promise<QboDocResult> {
   const conn = await getActiveConnection();
-  const customerId = input.customerId ?? (await findOrCreateCustomer(conn, input.customerName));
   const Line = await buildLines(conn, input.lines, input.itemName ?? "Job Sheet Line");
+  const customerId = input.customerId ?? (await findOrCreateCustomer(conn, input.customerName));
   const docNumber = await findNextDocNumber(conn, "Invoice");
 
   const result = await qboFetch(conn, "/invoice", {

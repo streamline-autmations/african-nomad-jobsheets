@@ -37,7 +37,7 @@ export default defineConfig({
     // One command covers the whole repository. The bridge also carries its own
     // vitest.config.ts so it can be tested standalone from bridge/ — without
     // it, Vitest walks up and loads this frontend config instead.
-    include: ["src/**/*.test.ts", "bridge/src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "api/**/*.test.ts", "bridge/src/**/*.test.ts"],
     // Unit tests cover pure calculation and mapping logic, but importing it
     // reaches lib/supabase.ts, which builds a real client at module load.
     // Vitest otherwise inherits .env.local, so that client is actually
