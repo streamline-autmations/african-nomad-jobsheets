@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { JobSheetForm } from "./components/JobSheetForm";
+import { useRef, useState } from "react";
+import { JobSheetForm, type JobSheetFormHandle } from "./components/JobSheetForm";
 import { ApprovalView } from "./components/ApprovalView";
 import { NsaQuoteForm } from "./components/NsaQuoteForm";
 import { NsaQuoteList } from "./components/NsaQuoteList";
@@ -21,6 +21,7 @@ export default function App() {
   // Shown above the form when it opens — e.g. to say it's now on a copy,
   // which otherwise looks identical to the original.
   const [editNotice, setEditNotice] = useState<string | null>(null);
+  const jobSheetFormRef = useRef<JobSheetFormHandle>(null);
 
   function openInEditor(id: string, notice: string | null = null) {
     setEditJobSheetId(id);
@@ -44,6 +45,11 @@ export default function App() {
           >
             New Job Sheet
           </button>
+          {tab === "new" && (
+            <button type="button" onClick={() => jobSheetFormRef.current?.copy()}>
+              Copy Job Sheet
+            </button>
+          )}
           <button
             type="button"
             className={tab === "approvals" ? "active" : ""}
@@ -77,6 +83,7 @@ export default function App() {
         )}
         {tab === "new" && (
           <JobSheetForm
+            ref={jobSheetFormRef}
             editJobSheetId={editJobSheetId}
             notice={editNotice}
             onEditSaved={() => {

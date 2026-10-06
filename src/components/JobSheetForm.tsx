@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { CompanySelect } from "./CompanySelect";
 import { JobSheetLinesGrid } from "./JobSheetLinesGrid";
 import { JobSheetInternalDocument } from "./JobSheetInternalDocument";
@@ -34,7 +34,16 @@ interface JobSheetFormProps {
   onCopied?: (id: string) => void;
 }
 
-export function JobSheetForm({ editJobSheetId, onEditSaved, notice, onCopied }: JobSheetFormProps) {
+/** Lets the app header's "Copy Job Sheet" button run the same copy as the
+ * form's own button, from whatever is on screen. */
+export interface JobSheetFormHandle {
+  copy: () => void;
+}
+
+export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(function JobSheetForm(
+  { editJobSheetId, onEditSaved, notice, onCopied },
+  ref,
+) {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [commonExpenses, setCommonExpenses] = useState<CommonExpense[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -69,8 +78,16 @@ export function JobSheetForm({ editJobSheetId, onEditSaved, notice, onCopied }: 
 
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
+  // State lags a fast double-click; this doesn't.
+  const copyInFlight = useRef(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // The header's Copy button sits a long way above the form's banners, so an
+  // error has to come into view or the click looks like it did nothing.
+  const saveErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (saveError) saveErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [saveError]);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
   const [showQuotePreview, setShowQuotePreview] = useState(false);
 
@@ -283,8 +300,11 @@ export function JobSheetForm({ editJobSheetId, onEditSaved, notice, onCopied }: 
   }
 
   // Copies what's on screen — including edits not saved yet, which then live
-  // in the copy only; the original keeps whatever it was last saved with.
+  // in the copy only; the original keeps whatever it was last saved with. A
+  // sheet that was never saved is saved as a draft first, so "copy" always
+  // leaves two job sheets behind: the original and the copy.
   async function handleCopy() {
+    if (saving || copyInFlight.current) return;
     setSaveError(null);
     setSaveMessage(null);
 
@@ -294,16 +314,34 @@ export function JobSheetForm({ editJobSheetId, onEditSaved, notice, onCopied }: 
       return;
     }
 
+    const who = customerNameRaw || "this customer";
+    const confirmed = window.confirm(
+      editingId
+        ? `Copy this job sheet for ${who}? A new draft copy will be created and opened.`
+        : `This job sheet for ${who} isn't saved yet. Save it as a draft and make a copy of it? ` +
+            "The copy will be opened.",
+    );
+    if (!confirmed) return;
+
+    copyInFlight.current = true;
     setCopying(true);
     try {
+      if (!editingId) {
+        const saved = await saveJobSheetDraft(formInput());
+        // So a retry after a failed copy doesn't save the original twice.
+        setEditingId(saved.id);
+      }
       const copy = await copyJobSheet(formInput());
       onCopied?.(copy.id);
     } catch (err) {
       setSaveError(errorMessage(err));
     } finally {
+      copyInFlight.current = false;
       setCopying(false);
     }
   }
+
+  useImperativeHandle(ref, () => ({ copy: () => void handleCopy() }));
 
   if (loadError) {
     return (
@@ -473,7 +511,11 @@ export function JobSheetForm({ editJobSheetId, onEditSaved, notice, onCopied }: 
         </div>
       </details>
 
-      {saveError && <div className="banner banner-error">{saveError}</div>}
+      {saveError && (
+        <div ref={saveErrorRef} className="banner banner-error">
+          {saveError}
+        </div>
+      )}
       {saveMessage && <div className="banner banner-success">{saveMessage}</div>}
 
       <div className="form-actions">
@@ -491,16 +533,14 @@ export function JobSheetForm({ editJobSheetId, onEditSaved, notice, onCopied }: 
         >
           View / print quote
         </button>
-        {editingId && (
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={saving || copying}
-            onClick={handleCopy}
-          >
-            {copying ? "Copying…" : "Copy job sheet"}
-          </button>
-        )}
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={saving || copying}
+          onClick={handleCopy}
+        >
+          {copying ? "Copying…" : "Copy job sheet"}
+        </button>
         <button
           type="button"
           className="btn-primary"
@@ -528,4 +568,4 @@ export function JobSheetForm({ editJobSheetId, onEditSaved, notice, onCopied }: 
       )}
     </div>
   );
-}
+});
