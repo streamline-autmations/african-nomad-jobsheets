@@ -38,14 +38,12 @@ export function JobSheetInternalDocument({
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  // Grouping (supplierCostByClientRow) has to run on the *full* row list,
-  // blank separators included — a blank row is what stops trailing
-  // unattributed costs piling onto the last client line (see
-  // jobSheetRows.supplierCostByClientRow). Filtering blanks out for the
-  // printed table happens after, on the already-computed cost per row, not
-  // before.
+  // Each client line's mark-up is measured against the supplier cell across
+  // from it (see jobSheetRows.supplierCostByClientRow). Blank rows are
+  // filtered out of the printed table after the cost per row is computed, so
+  // the costs stay indexed against the full row list.
   const rawRows = linesToSheetRows(job.clientLines, job.expenseLines);
-  const { costs: supplierCosts } = supplierCostByClientRow(rawRows);
+  const supplierCosts = supplierCostByClientRow(rawRows);
   const rows = rawRows
     .map((row, index) => ({ row, cost: supplierCosts[index] ?? 0 }))
     .filter(({ row }) => rowHasClient(row) || rowHasSupplier(row));

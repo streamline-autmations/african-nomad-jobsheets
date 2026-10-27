@@ -168,12 +168,10 @@ export function linesToSheetRows(clientLines: LineItem[], expenseLines: LineItem
 
   // Gaps are preserved, but collapsed to a single blank row each.
   //
-  // Both halves of that matter. A blank row is what ends a cost group (see
-  // supplierCostByClientRow), so flattening gaps away would silently re-attach
-  // unattributed costs to the client line above them and change its margin on
-  // reload. Keeping the raw row numbers instead would reopen a sheet with a
-  // screenful of blanks wherever someone had deleted rows. One blank row per
-  // gap keeps the meaning without the emptiness.
+  // Flattening them away would change the layout people built on the sheet;
+  // keeping the raw row numbers would reopen a sheet with a screenful of
+  // blanks wherever someone had deleted rows. One blank row per gap keeps the
+  // separation without the emptiness.
   const ordered = [...new Set(positioned.map((l) => l.row as number))].sort((a, b) => a - b);
   const placed = new Map<number, number>();
   let cursor = 0;
@@ -216,53 +214,22 @@ export function rowIsBlank(row: SheetRow): boolean {
   return !rowHasClient(row) && !rowHasSupplier(row);
 }
 
-export interface SupplierCostGrouping {
-  /** Total supplier cost attributed to each client row; 0 for other rows. */
-  costs: number[];
-  /** For each row, the client row its cost counts towards, or -1 for none. */
-  ownerOf: number[];
-}
-
 /**
- * Which supplier rows each client row is costed against.
+ * The supplier cost each client row's mark-up is measured against: the
+ * supplier cell directly across from it on the same row, and nothing else.
+ * 0 for a row with no client side or no supplier side.
  *
- * A client row owns the supplier row on its own line plus every supplier row
- * beneath it until the next client row — which is how the real sheets read: a
- * "Black Puffer Jacket" client line sits above the jacket, its branding and
- * its delivery on the supplier side, and its mark-up is measured against all
- * three. The Excel does this with a hardcoded `=(E17-(P17+P18))/E17`, which
- * only ever reaches one row down and silently under-reports a line backed by
- * three costs. This reaches as far as the grouping actually goes.
- *
- * A completely blank row ends the group. That matters: the Cup-a-Soup sheet
- * finishes with an issuing system, a casual and accommodation — real costs on
- * the job that belong to no client line at all. Without a terminator they all
- * pile onto whichever client line happened to come last, which reported that
- * line at -2420% margin. A blank row is how you separate things in a
- * spreadsheet, so it is how you separate them here.
- *
- * Costs owned by nobody still count in full towards the sheet's expense total
- * — they are simply not attributable to one line's mark-up.
+ * A supplier row with no client line opposite it (branding, delivery, a
+ * casual) is a plain cost. It counts in full towards the sheet's expense total
+ * but is never folded into the mark-up of the client line above it. Rolling
+ * those rows up used to make two lines for the same product read different
+ * mark-ups — and "Price every line at" price them differently — depending on
+ * what happened to sit beneath each one.
  */
-export function supplierCostByClientRow(rows: SheetRow[]): SupplierCostGrouping {
-  const costs = new Array<number>(rows.length).fill(0);
-  const ownerOf = new Array<number>(rows.length).fill(-1);
-  let owner = -1;
-
-  rows.forEach((row, index) => {
-    if (rowIsBlank(row)) {
-      owner = -1;
-      return;
-    }
-    if (rowHasClient(row)) owner = index;
-    if (owner >= 0 && rowHasSupplier(row)) {
-      ownerOf[index] = owner;
-      // round2 per line then again on the sum — the same order
-      // calculateLinesSubtotal uses, so a row's mark-up is measured against
-      // exactly the number the sheet's expense total counts.
-      costs[owner] = round2(costs[owner] + round2(row.supplierQty * row.supplierUnitCost));
-    }
-  });
-
-  return { costs, ownerOf };
+export function supplierCostByClientRow(rows: SheetRow[]): number[] {
+  // round2 on the line total, the same as calculateLinesSubtotal, so a row's
+  // mark-up is measured against exactly the number the expense total counts.
+  return rows.map((row) =>
+    rowHasClient(row) && rowHasSupplier(row) ? round2(row.supplierQty * row.supplierUnitCost) : 0,
+  );
 }

@@ -436,7 +436,7 @@ export function JobSheetLinesGrid({
     () => new Set(rows.flatMap((r, i) => (r.photoPaths.length > 0 ? [i] : []))),
   );
 
-  const { costs: supplierCosts, ownerOf } = supplierCostByClientRow(rows);
+  const supplierCosts = supplierCostByClientRow(rows);
 
   function toggleQtyLink(index: number) {
     const linking = !linkedQtyRows.has(index);
@@ -911,15 +911,10 @@ export function JobSheetLinesGrid({
             const ownedCost = supplierCosts[index] ?? 0;
             const markup = rowHasClient(row) ? markupPctFromTotals(clientTotal, ownedCost) : null;
             const canReprice = row.clientQty > 0 && ownedCost > 0;
-            // A cost rolled up into the client line above it rather than
-            // priced on its own. Marked in the gutter so the grouping is
-            // visible: which costs sit against which line changes what the
-            // mark-up column says, and guessing at it is how a line ends up
-            // reading -2420%.
-            const isRolledUp = !rowHasClient(row) && ownerOf[index] >= 0;
-            // A cost belonging to no client line at all — an unbilled job
-            // overhead. Counts in full towards the sheet's expenses.
-            const isUnattributed = !rowHasClient(row) && rowHasSupplier(row) && ownerOf[index] < 0;
+            // A cost with no client line across from it — branding, delivery,
+            // an unbilled overhead. Counts in full towards the sheet's
+            // expenses, but no line's mark-up is measured against it.
+            const isCostOnly = !rowHasClient(row) && rowHasSupplier(row);
             // Both sides carry the same item, so linking their quantities is
             // offered — but only offered; wastage/spoilage means the two
             // legitimately differ on plenty of rows.
@@ -967,16 +962,10 @@ export function JobSheetLinesGrid({
                   </button>
                 ) : (
                   <span
-                    className={`sheet-gutter${isRolledUp ? " sheet-gutter-rolled" : ""}`}
-                    title={
-                      isRolledUp
-                        ? `Costed against row ${ownerOf[index] + 1}. Leave a blank row above to separate it.`
-                        : isUnattributed
-                          ? "Counts towards expenses but not against any one line's mark-up"
-                          : undefined
-                    }
+                    className="sheet-gutter"
+                    title={isCostOnly ? "Cost only — counts towards expenses, not any line's mark-up" : undefined}
                   >
-                    {isRolledUp ? "↳" : index + 1}
+                    {index + 1}
                   </span>
                 )}
 
@@ -1047,7 +1036,7 @@ export function JobSheetLinesGrid({
                 {canReprice ? (
                   <NumberCell
                     className="num sheet-markup"
-                    title="Type a margin to price this line backwards from its supplier cost"
+                    title="Type a mark-up to price this line backwards from the supplier cost across from it"
                     ariaLabel={`Row ${index + 1} mark-up percent`}
                     rowIndex={index}
                     col="markup"
@@ -1059,11 +1048,9 @@ export function JobSheetLinesGrid({
                   <span
                     className="sheet-markup sheet-markup-static"
                     title={
-                      isRolledUp
-                        ? `Costed against row ${ownerOf[index] + 1}`
-                        : isUnattributed
-                          ? "Not billed to the client — counts towards expenses only"
-                          : "Needs a client quantity and a supplier cost"
+                      isCostOnly
+                        ? "Not billed to the client — counts towards expenses only"
+                        : "Needs a client quantity and a supplier cost on this row"
                     }
                   >
                     {markup === null ? "" : `${markup.toFixed(0)}%`}

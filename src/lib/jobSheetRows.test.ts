@@ -193,10 +193,7 @@ describe("linesToSheetRows", () => {
     expect(linesToSheetRows([], []).every((r) => r.clientDescription === "")).toBe(true);
   });
 
-  it("keeps a blank separator row, so cost attribution survives a reload", () => {
-    // The separator is load-bearing: it is what stops the trailing unbilled
-    // costs being counted against the Delivery line above them. Flattening it
-    // away on reload would silently change that line's margin.
+  it("keeps a blank separator row through a reload", () => {
     const original = [
       sheetRow({ ...client("Delivery", 1, 500), ...supplier("Delivery", 1, 500) }),
       emptySheetRow(),
@@ -210,8 +207,7 @@ describe("linesToSheetRows", () => {
 
     expect(reloaded[1].supplierDescription).toBe("");
     expect(reloaded[2].supplierDescription).toBe("Accommodation");
-    expect(supplierCostByClientRow(reloaded).costs[0]).toBe(500);
-    expect(supplierCostByClientRow(reloaded).ownerOf[2]).toBe(-1);
+    expect(supplierCostByClientRow(reloaded).slice(0, 3)).toEqual([500, 0, 0]);
   });
 
   it("collapses a wide gap to a single blank row rather than a screenful", () => {
@@ -265,17 +261,16 @@ describe("linesToSheetRows", () => {
 
 describe("supplierCostByClientRow", () => {
   it("gives a client row the cost of the supplier row beside it", () => {
-    const { costs } = supplierCostByClientRow([
+    const costs = supplierCostByClientRow([
       sheetRow({ ...client("Boots", 10, 100), ...supplier("Boots", 10, 60) }),
     ]);
     expect(costs[0]).toBe(600);
   });
 
-  it("rolls the supplier rows beneath a client row up into it", () => {
-    // The real case: one client jacket line backed by jacket + branding +
-    // delivery. The Excel's own formula only ever reaches one row down and
-    // would report this line as costing 10,640 instead of 11,140.
-    const { costs } = supplierCostByClientRow([
+  it("does not fold the cost-only rows beneath a client row into it", () => {
+    // Jacket + branding + delivery: the jacket line is measured against the
+    // jacket cell across from it (35 x 289), not the 525 and 500 below it.
+    const costs = supplierCostByClientRow([
       sheetRow({
         ...client("Black Puffer Jacket + 2 position embroidery", 35, 475),
         ...supplier("Black Puffer Jacket + 2 position embroidery", 35, 289),
@@ -284,72 +279,41 @@ describe("supplierCostByClientRow", () => {
       sheetRow({ ...supplier("Delivery", 1, 500) }),
     ]);
 
-    expect(costs[0]).toBe(11140); // 10115 + 525 + 500
-    expect(costs[1]).toBe(0);
-    expect(costs[2]).toBe(0);
+    expect(costs).toEqual([10115, 0, 0]);
   });
 
-  it("stops rolling up at the next client row", () => {
-    const { costs } = supplierCostByClientRow([
-      sheetRow({ ...client("Jacket", 35, 475), ...supplier("Jacket", 35, 289) }),
-      sheetRow({ ...supplier("Branding", 35, 15) }),
-      sheetRow({ ...client("T-shirts", 410, 175), ...supplier("T-shirts", 410, 77.89) }),
-      sheetRow({ ...supplier("Branding", 410, 15) }),
+  it("gives two lines for the same product the same cost whatever sits beneath them", () => {
+    // Same product, same cost, on two lines — one with a cost-only row under
+    // it, one without. Both must read the same, or "Price every line at"
+    // prices the same product two ways.
+    const costs = supplierCostByClientRow([
+      sheetRow({ ...client("Beanies", 10, 70), ...supplier("Beanies", 10, 50) }),
+      sheetRow({ ...supplier("Branding", 10, 15) }),
+      sheetRow({ ...client("Beanies", 10, 70), ...supplier("Beanies", 10, 50) }),
     ]);
 
-    expect(costs[0]).toBe(10640); // jacket + its branding only
-    expect(costs[2]).toBe(38084.9); // t-shirts + their branding only
+    expect(costs[0]).toBe(500);
+    expect(costs[2]).toBe(500);
   });
 
-  it("ignores supplier rows sitting above the first client row", () => {
-    // Their cost still counts on the sheet's expense total — it just isn't
-    // attributable to any one client line's mark-up.
-    const { costs } = supplierCostByClientRow([
+  it("is zero for a cost-only row, wherever it sits", () => {
+    const costs = supplierCostByClientRow([
       sheetRow({ ...supplier("Deposit", 1, 1000) }),
       sheetRow({ ...client("Job", 1, 5000), ...supplier("Job cost", 1, 3000) }),
+      emptySheetRow(),
+      sheetRow({ ...supplier("Accommodation", 1, 7100) }),
     ]);
 
-    expect(costs[0]).toBe(0);
-    expect(costs[1]).toBe(3000);
+    expect(costs).toEqual([0, 3000, 0, 0]);
+  });
+
+  it("is zero for a client-only row", () => {
+    const costs = supplierCostByClientRow([sheetRow({ ...client("Management time", 1, 5000) })]);
+    expect(costs).toEqual([0]);
   });
 
   it("returns zeroes for an empty sheet without throwing", () => {
-    expect(supplierCostByClientRow([]).costs).toEqual([]);
-    expect(supplierCostByClientRow([emptySheetRow()]).costs).toEqual([0]);
-  });
-
-  it("stops rolling up at a blank row", () => {
-    // The Cup-a-Soup sheet's tail: an issuing system, a casual and
-    // accommodation, none of them billed to the client. Without the blank-row
-    // terminator all three pile onto the Delivery line above and report it at
-    // -2420% margin.
-    const rows = [
-      sheetRow({ ...client("Delivery", 1, 500), ...supplier("Delivery", 1, 500) }),
-      emptySheetRow(),
-      sheetRow({ ...supplier("issuing system", 1, 2000) }),
-      sheetRow({ ...supplier("casual", 1, 3000) }),
-      sheetRow({ ...supplier("Accommodation", 1, 7100) }),
-    ];
-    const { costs, ownerOf } = supplierCostByClientRow(rows);
-
-    expect(costs[0]).toBe(500);
-    expect(ownerOf.slice(2)).toEqual([-1, -1, -1]);
-  });
-
-  it("reports which client row each cost is attributed to", () => {
-    const { ownerOf } = supplierCostByClientRow([
-      sheetRow({ ...client("Jacket", 35, 475), ...supplier("Jacket", 35, 289) }),
-      sheetRow({ ...supplier("Branding", 35, 15) }),
-      sheetRow({ ...client("T-shirts", 410, 175), ...supplier("T-shirts", 410, 77.89) }),
-    ]);
-    expect(ownerOf).toEqual([0, 0, 2]);
-  });
-
-  it("leaves costs above the first client row attributed to nobody", () => {
-    const { ownerOf } = supplierCostByClientRow([
-      sheetRow({ ...supplier("Deposit", 1, 1000) }),
-      sheetRow({ ...client("Job", 1, 5000), ...supplier("Job cost", 1, 3000) }),
-    ]);
-    expect(ownerOf).toEqual([-1, 1]);
+    expect(supplierCostByClientRow([])).toEqual([]);
+    expect(supplierCostByClientRow([emptySheetRow()])).toEqual([0]);
   });
 });
