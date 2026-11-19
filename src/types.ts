@@ -95,6 +95,7 @@ export interface JobSheetFile {
 }
 
 export interface JobSheet extends JobSheetFinancials {
+  editRevision?: number;
   id: string;
   companyId: string;
   customerId: string | null;

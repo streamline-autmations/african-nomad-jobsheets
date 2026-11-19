@@ -25,6 +25,7 @@ function requireSupabase() {
 
 type JobSheetRow = {
   id: string;
+  edit_revision?: number;
   company_id: string;
   customer_id: string | null;
   customer_name_raw: string;
@@ -57,6 +58,7 @@ type JobSheetRow = {
 function toJobSheet(row: JobSheetRow): JobSheet {
   return {
     id: row.id,
+    editRevision: row.edit_revision,
     companyId: row.company_id,
     customerId: row.customer_id,
     customerNameRaw: row.customer_name_raw,
@@ -164,8 +166,7 @@ export async function fetchJobSheetById(id: string): Promise<JobSheet> {
   return toJobSheet(data);
 }
 
-export interface SaveJobSheetDraftInput {
-  id?: string;
+export interface SaveJobSheetInput {
   companyId: string;
   companyName: string;
   customerId: string | null;
@@ -175,6 +176,32 @@ export interface SaveJobSheetDraftInput {
   eventDate: string | null;
   clientLines: LineItem[];
   expenseLines: LineItem[];
+}
+
+type EditableJobSheetStatus = Extract<JobSheet["status"], "draft" | "approved">;
+export type EditableJobSheet = JobSheet & { status: EditableJobSheetStatus };
+
+export function isJobSheetEditable(status: JobSheet["status"]): status is EditableJobSheetStatus {
+  return status === "draft" || status === "approved";
+}
+
+export function calculateJobSheetEditFinancials(
+  input: Parameters<typeof calculateJobSheetFinancials>[0] & { companyId: string },
+  existing?: EditableJobSheet,
+): JobSheetFinancials {
+  const financials = calculateJobSheetFinancials(input);
+  // Retain historical approved totals when changing only descriptions, dates,
+  // or other fields that do not change the inputs to the fee calculation.
+  if (
+    existing?.status === "approved" &&
+    existing.companyId === input.companyId &&
+    existing.customerNameRaw === input.customerName &&
+    existing.clientSubtotal === financials.clientSubtotal &&
+    existing.expenseTotal === financials.expenseTotal
+  ) {
+    return existing;
+  }
+  return financials;
 }
 
 function financialsToRow(financials: JobSheetFinancials) {
@@ -197,24 +224,32 @@ function financialsToRow(financials: JobSheetFinancials) {
 // Recomputes the fee cascade server-side-of-the-client (i.e. right before the
 // write) rather than trusting whatever numbers happen to be sitting in
 // component state, so a stale render can never persist wrong fee amounts.
-export async function saveJobSheetDraft(
-  input: SaveJobSheetDraftInput,
+export async function saveJobSheet(
+  input: SaveJobSheetInput,
+  existing?: EditableJobSheet,
 ): Promise<JobSheet> {
   const client = requireSupabase();
+  const revision = existing?.status === "approved" ? existing.editRevision : undefined;
+  if (existing?.status === "approved" && revision === undefined) {
+    throw new Error("Approved editing requires the job sheet database update.");
+  }
 
   // customerNameRaw always holds the customer's display name, whether typed
   // fresh (no match yet) or copied from the matched customers-table row — the
   // Sibanye fee check needs the name regardless of match state.
-  const financials = calculateJobSheetFinancials({
+  const financials = calculateJobSheetEditFinancials({
+    companyId: input.companyId,
     companyName: input.companyName,
     customerName: input.customerNameRaw,
     clientLines: input.clientLines,
     expenseLines: input.expenseLines,
-  });
+  }, existing);
 
   const row = {
     company_id: input.companyId,
-    customer_id: input.customerId,
+    // The Desktop bridge owns the legacy customer link after approval.
+    ...(existing?.status === "approved" ? {} : { customer_id: input.customerId }),
+    ...(revision === undefined ? {} : { edit_revision: revision + 1 }),
     customer_name_raw: input.customerNameRaw,
     qbo_customer_id: input.qboCustomerId ?? null,
     job_description: input.jobDescription,
@@ -224,12 +259,20 @@ export async function saveJobSheetDraft(
     ...financialsToRow(financials),
   };
 
-  const query = input.id
-    ? client.from("job_sheets").update(row).eq("id", input.id).eq("status", "draft")
+  // Update the internal sheet only. Approval already captured the Desktop
+  // queue payloads, and an NSA document has its own record and lifecycle.
+  const query = existing
+    ? client.from("job_sheets").update(row).eq("id", existing.id).eq("status", existing.status)
     : client.from("job_sheets").insert(row);
+  if (revision !== undefined) query.eq("edit_revision", revision);
 
-  const { data, error } = await query.select("*").single();
+  const { data, error } = await query.select("*").maybeSingle();
   if (error) throw error;
+  if (!data) {
+    throw new Error(existing
+      ? "This job sheet changed or was removed while you were editing. Use Copy Job Sheet to keep your edits in a draft."
+      : "Couldn't save the new draft.");
+  }
   return toJobSheet(data);
 }
 
@@ -314,7 +357,7 @@ export async function mergeDraftJobSheets(
 
   const { clientLines, expenseLines } = sheetRowsToLines(mergedRows);
 
-  const saved = await saveJobSheetDraft({
+  const saved = await saveJobSheet({
     companyId: first.companyId,
     companyName,
     customerId: first.customerId,
@@ -342,9 +385,7 @@ export async function mergeDraftJobSheets(
 // queue), and each photo is copied to its own storage object rather than
 // shared: removing a photo deletes the object straight away (RowPhotoStrip),
 // so a shared path would vanish from the original as well.
-export async function copyJobSheet(
-  input: Omit<SaveJobSheetDraftInput, "id">,
-): Promise<JobSheet> {
+export async function copyJobSheet(input: SaveJobSheetInput): Promise<JobSheet> {
   const copiedPhotoPaths: string[] = [];
   try {
     const rows: SheetRow[] = [];
@@ -359,7 +400,7 @@ export async function copyJobSheet(
     }
 
     const { clientLines, expenseLines } = sheetRowsToLines(rows);
-    return await saveJobSheetDraft({
+    return await saveJobSheet({
       ...input,
       clientLines: clientLines.map(withLineTotal),
       expenseLines: expenseLines.map(withLineTotal),

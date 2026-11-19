@@ -3,14 +3,17 @@ import { CompanySelect } from "./CompanySelect";
 import { JobSheetLinesGrid } from "./JobSheetLinesGrid";
 import { JobSheetInternalDocument } from "./JobSheetInternalDocument";
 import { JobSheetDocument } from "./JobSheetDocument";
-import { calculateJobSheetFinancials, withLineTotal } from "../lib/feeCalculations";
+import { withLineTotal } from "../lib/feeCalculations";
 import { linesToSheetRows, sheetRowsToLines, type SheetRow } from "../lib/jobSheetRows";
 import {
+  calculateJobSheetEditFinancials,
   copyJobSheet,
   fetchCommonExpenses,
   fetchCompanies,
   fetchJobSheetById,
-  saveJobSheetDraft,
+  isJobSheetEditable,
+  saveJobSheet,
+  type EditableJobSheet,
 } from "../lib/jobSheets";
 import {
   nsaQboCustomerLabel,
@@ -21,10 +24,10 @@ import type { CommonExpense, Company, JobSheet } from "../types";
 import { errorMessage } from "../lib/errors";
 
 interface JobSheetFormProps {
-  /** When set, loads that existing draft for editing instead of starting blank
+  /** When set, loads that existing sheet for editing instead of starting blank
    * (e.g. an AN Job Sheet created from an NSA Quote, which has no expenses yet). */
   editJobSheetId?: string | null;
-  /** Called after a successful save while editing — lets the caller navigate
+  /** Called after a successful draft edit — lets the caller navigate
    * back (e.g. to Approvals) instead of leaving a stale editing session open. */
   onEditSaved?: () => void;
   /** Shown as a banner above the form, e.g. after opening a fresh copy. */
@@ -48,8 +51,7 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
   const [commonExpenses, setCommonExpenses] = useState<CommonExpense[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [editingId, setEditingId] = useState<string | undefined>(undefined);
-  const [loadingExisting, setLoadingExisting] = useState(false);
+  const [editingSheet, setEditingSheet] = useState<EditableJobSheet>();
   const [companyId, setCompanyId] = useState("");
   const [customerNameRaw, setCustomerNameRaw] = useState("");
   // True means "not in QuickBooks yet, type the name" — the customer picker
@@ -134,11 +136,13 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
   useEffect(() => {
     if (!editJobSheetId) return;
     let cancelled = false;
-    setLoadingExisting(true);
     fetchJobSheetById(editJobSheetId)
       .then((job) => {
         if (cancelled) return;
-        setEditingId(job.id);
+        if (!isJobSheetEditable(job.status)) {
+          throw new Error(`This job sheet is now ${job.status}. Open it in Approved Job Sheets to review its status.`);
+        }
+        setEditingSheet({ ...job, status: job.status });
         setCompanyId(job.companyId);
         setCustomerNameRaw(job.customerNameRaw);
         setIsNewCustomer(job.qboCustomerId === null);
@@ -150,14 +154,16 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
       .catch((err: unknown) => {
         if (cancelled) return;
         setLoadError(errorMessage(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingExisting(false);
       });
     return () => {
       cancelled = true;
     };
   }, [editJobSheetId]);
+
+  const editingId = editingSheet?.id;
+  const editingApproved = editingSheet?.status === "approved";
+  const storedCustomer = editingApproved && editingSheet.qboCustomerId ? editingSheet : null;
+  const loadingEditor = Boolean(editJobSheetId && editJobSheetId !== editingId);
 
   // A draft reopened after QuickBooks renamed, merged or deleted its customer
   // still carries the old name and Id. The name drives the Sibanye 2.5%, and
@@ -165,7 +171,7 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
   // sync. Only acts on a sync that actually succeeded — on a failed sync the
   // mirror may just be stale, not the job sheet.
   useEffect(() => {
-    if (syncingQboCustomers || loadingExisting || qboCustomersError) return;
+    if (editingApproved || syncingQboCustomers || loadingEditor || qboCustomersError) return;
     if (isNewCustomer || !selectedQboCustomerId || qboCustomers.length === 0) return;
     const customer = qboCustomers.find((c) => c.qboCustomerId === selectedQboCustomerId);
     if (!customer) {
@@ -178,8 +184,9 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
     const label = nsaQboCustomerLabel(customer, qboCustomers);
     if (label !== customerNameRaw) setCustomerNameRaw(label);
   }, [
+    editingApproved,
     syncingQboCustomers,
-    loadingExisting,
+    loadingEditor,
     qboCustomersError,
     isNewCustomer,
     selectedQboCustomerId,
@@ -192,13 +199,14 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
   const { clientLines, expenseLines } = useMemo(() => sheetRowsToLines(rows), [rows]);
 
   const financials = useMemo(() => {
-    return calculateJobSheetFinancials({
+    return calculateJobSheetEditFinancials({
+      companyId,
       companyName: selectedCompany?.name ?? "",
       customerName: customerNameRaw,
       clientLines: clientLines.map(withLineTotal),
       expenseLines: expenseLines.map(withLineTotal),
-    });
-  }, [selectedCompany, customerNameRaw, clientLines, expenseLines]);
+    }, editingSheet);
+  }, [companyId, selectedCompany, customerNameRaw, clientLines, expenseLines, editingSheet]);
 
   // A print/download preview needs a full JobSheet shape, but this form
   // works from loose draft state that may not be saved yet — so this fills
@@ -206,6 +214,7 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
   // rather than requiring a save first just to see what it'll look like.
   const draftJobSheet: JobSheet = useMemo(
     () => ({
+      ...financials,
       id: editingId ?? "draft",
       companyId,
       customerId: null,
@@ -222,7 +231,6 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
       createdAt: new Date().toISOString(),
       approvedAt: null,
       syncedAt: null,
-      ...financials,
     }),
     [
       editingId,
@@ -249,7 +257,7 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
   }
 
   function validationError(): string | null {
-    if (!companyId) return "Select a company before saving.";
+    if (!selectedCompany) return "Select a company before saving.";
     if (!isNewCustomer && !selectedQboCustomerId) {
       return "Select a customer, or tick \"this customer isn't in QuickBooks yet\".";
     }
@@ -257,7 +265,7 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
     return null;
   }
 
-  // What's on screen, ready for saveJobSheetDraft / copyJobSheet.
+  // What's on screen, ready for saveJobSheet / copyJobSheet.
   function formInput() {
     return {
       companyId,
@@ -284,8 +292,11 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
 
     setSaving(true);
     try {
-      await saveJobSheetDraft({ id: editingId, ...formInput() });
-      if (editingId) {
+      const saved = await saveJobSheet(formInput(), editingSheet);
+      if (editingApproved) {
+        setEditingSheet({ ...saved, status: "approved" });
+        setSaveMessage("Approved job sheet updated.");
+      } else if (editingId) {
         setSaveMessage("Draft updated.");
         onEditSaved?.();
       } else {
@@ -304,7 +315,7 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
   // sheet that was never saved is saved as a draft first, so "copy" always
   // leaves two job sheets behind: the original and the copy.
   async function handleCopy() {
-    if (saving || copyInFlight.current) return;
+    if (loadingEditor || loadError || saving || copyInFlight.current) return;
     setSaveError(null);
     setSaveMessage(null);
 
@@ -327,9 +338,9 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
     setCopying(true);
     try {
       if (!editingId) {
-        const saved = await saveJobSheetDraft(formInput());
+        const saved = await saveJobSheet(formInput());
         // So a retry after a failed copy doesn't save the original twice.
-        setEditingId(saved.id);
+        setEditingSheet({ ...saved, status: "draft" });
       }
       const copy = await copyJobSheet(formInput());
       onCopied?.(copy.id);
@@ -346,27 +357,34 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
   if (loadError) {
     return (
       <div className="banner banner-error">
-        Couldn&apos;t load reference data: {loadError}
+        Couldn&apos;t load the editor: {loadError}
       </div>
     );
   }
 
-  if (loadingExisting) {
+  if (loadingEditor) {
     return <p>Loading job sheet…</p>;
   }
 
   return (
     <div className="job-sheet-form">
       {notice && <div className="banner banner-success">{notice}</div>}
-      {editingId && (
+      {editingApproved ? (
+        <div className="banner banner-warning">
+          Editing an approved job sheet. Changes apply to the internal sheet only. Existing
+          NSA documents and QuickBooks records, including pending Desktop entries, keep their original values.
+        </div>
+      ) : editingId && (
         <div className="banner">Editing an existing draft — changes replace what&apos;s there.</div>
       )}
 
       <div className="form-section-heading">
         <h3>Job details</h3>
-        <p className="section-description">
-          The job description becomes the Job name in QuickBooks.
-        </p>
+        {!editingApproved && (
+          <p className="section-description">
+            The job description becomes the Job name in QuickBooks.
+          </p>
+        )}
       </div>
 
       <div className="form-grid">
@@ -379,18 +397,25 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
             <select
               value={selectedQboCustomerId ?? ""}
               onChange={(e) => {
-                const customer = qboCustomers.find((c) => c.qboCustomerId === e.target.value);
-                if (!customer) return;
+                const id = e.target.value;
+                const customer = qboCustomers.find((c) => c.qboCustomerId === id);
+                const name = storedCustomer?.qboCustomerId === id
+                  ? storedCustomer.customerNameRaw
+                  : customer && nsaQboCustomerLabel(customer, qboCustomers);
+                if (name === undefined) return;
                 setStaleCustomerNotice(null);
-                setSelectedQboCustomerId(customer.qboCustomerId);
-                setCustomerNameRaw(nsaQboCustomerLabel(customer, qboCustomers));
+                setSelectedQboCustomerId(id);
+                setCustomerNameRaw(name);
               }}
               required
             >
               <option value="" disabled>
                 {syncingQboCustomers ? "Syncing from QuickBooks…" : "Select a customer…"}
               </option>
-              {qboCustomers.map((customer) => (
+              {storedCustomer && (
+                <option value={storedCustomer.qboCustomerId ?? ""}>{storedCustomer.customerNameRaw}</option>
+              )}
+              {qboCustomers.filter((customer) => customer.qboCustomerId !== storedCustomer?.qboCustomerId).map((customer) => (
                 <option key={customer.qboCustomerId} value={customer.qboCustomerId}>
                   {nsaQboCustomerLabel(customer, qboCustomers)}
                 </option>
@@ -460,6 +485,7 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
         rows={rows}
         onChange={setRows}
         financials={financials}
+        preservePhotoFiles={editingApproved}
         descriptionSuggestions={commonExpenses.map((e) => e.label)}
         companyName={selectedCompany?.name ?? ""}
       />
@@ -516,7 +542,7 @@ export const JobSheetForm = forwardRef<JobSheetFormHandle, JobSheetFormProps>(fu
           {saveError}
         </div>
       )}
-      {saveMessage && <div className="banner banner-success">{saveMessage}</div>}
+      {saveMessage && <div className="banner banner-success" role="status">{saveMessage}</div>}
 
       <div className="form-actions">
         <button

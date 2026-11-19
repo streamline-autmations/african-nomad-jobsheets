@@ -15,7 +15,7 @@ export default function App() {
   // Bumped after saving a new NSA quote so NsaQuoteList refetches when the
   // user switches to it, without the two components needing to share state.
   const [nsaQuoteListKey, setNsaQuoteListKey] = useState(0);
-  // Set by Approvals' "Edit" button, read by JobSheetForm to load that draft
+  // Set by Approvals' "Edit" button, read by JobSheetForm to load that sheet
   // instead of starting blank — cleared once the edit is saved.
   const [editJobSheetId, setEditJobSheetId] = useState<string | null>(null);
   // Shown above the form when it opens — e.g. to say it's now on a copy,
@@ -83,6 +83,7 @@ export default function App() {
         )}
         {tab === "new" && (
           <JobSheetForm
+            key={editJobSheetId ?? "new"}
             ref={jobSheetFormRef}
             editJobSheetId={editJobSheetId}
             notice={editNotice}

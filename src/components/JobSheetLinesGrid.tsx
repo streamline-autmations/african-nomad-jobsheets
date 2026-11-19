@@ -346,6 +346,7 @@ function DescriptionCell({
 interface RowPhotoStripProps {
   row: SheetRow;
   onChange: (paths: string[]) => void;
+  preservePhotoFiles: boolean;
 }
 
 /**
@@ -354,7 +355,7 @@ interface RowPhotoStripProps {
  * never carry a photo, and the grid stays a spreadsheet rather than growing
  * a permanent image slot on every line.
  */
-function RowPhotoStrip({ row, onChange }: RowPhotoStripProps) {
+function RowPhotoStrip({ row, onChange, preservePhotoFiles }: RowPhotoStripProps) {
   const urls = useLineItemPhotoUrls(row.photoPaths);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -377,6 +378,8 @@ function RowPhotoStrip({ row, onChange }: RowPhotoStripProps) {
 
   function handleRemove(path: string) {
     onChange(row.photoPaths.filter((p) => p !== path));
+    // The saved sheet or an existing document may still reference this photo.
+    if (preservePhotoFiles) return;
     deleteLineItemPhoto(path).catch(() => {
       // The row no longer references it either way — a stray object left in
       // storage isn't worth surfacing an error for.
@@ -408,6 +411,7 @@ interface JobSheetLinesGridProps {
   financials: JobSheetFinancials;
   descriptionSuggestions?: string[];
   companyName?: string;
+  preservePhotoFiles?: boolean;
 }
 
 export function JobSheetLinesGrid({
@@ -416,6 +420,7 @@ export function JobSheetLinesGrid({
   financials,
   descriptionSuggestions,
   companyName = "",
+  preservePhotoFiles = false,
 }: JobSheetLinesGridProps) {
   const bulkMarginId = useId();
   const gridRef = useRef<HTMLDivElement>(null);
@@ -1168,7 +1173,11 @@ export function JobSheetLinesGrid({
                 </div>
               </div>
               {photosOpen && (
-                <RowPhotoStrip row={row} onChange={(paths) => updateRow(index, { photoPaths: paths })} />
+                <RowPhotoStrip
+                  row={row}
+                  onChange={(paths) => updateRow(index, { photoPaths: paths })}
+                  preservePhotoFiles={preservePhotoFiles}
+                />
               )}
               </Fragment>
             );

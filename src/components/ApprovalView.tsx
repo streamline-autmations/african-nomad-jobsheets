@@ -5,6 +5,7 @@ import {
   deleteJobSheetDraft,
   fetchAllJobSheets,
   fetchCompanies,
+  isJobSheetEditable,
   mergeDraftJobSheets,
 } from "../lib/jobSheets";
 import { fetchLatestNsaQuoteForClient, fetchNsaQuoteById } from "../lib/nsaQuotes";
@@ -606,14 +607,16 @@ export function ApprovalView({ onEditJobSheet, onJobSheetCopied }: ApprovalViewP
           )}
 
           <div className="line-items-header approval-actions">
-            <button
-              type="button"
-              className="btn-secondary"
-              disabled={approving}
-              onClick={() => onEditJobSheet(selected.id)}
-            >
-              Edit (add expenses, change lines…)
-            </button>
+            {isJobSheetEditable(selected.status) && (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={approving}
+                onClick={() => onEditJobSheet(selected.id)}
+              >
+                Edit (add expenses, change lines…)
+              </button>
+            )}
             <button
               type="button"
               className="btn-secondary"
