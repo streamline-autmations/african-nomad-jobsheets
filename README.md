@@ -405,3 +405,7 @@ Called out honestly rather than hidden:
 ## License
 
 Private and unlicensed. Published for portfolio review; not offered for reuse.
+
+---
+
+Designed & built by [Streamline Automations](https://streamline-automations.co.za/).
